@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:voice_task_app/core/stt/audio_recorder.dart';
 import 'package:voice_task_app/core/stt/wav_converter.dart';
+import 'package:voice_task_app/core/stt/whisper_service.dart';
 import 'package:voice_task_app/screens/preview/preview_screen.dart';
 
 /// Voice recording screen with real-time recording and transcription.
@@ -17,12 +18,16 @@ class RecordScreen extends ConsumerStatefulWidget {
 
 class _RecordScreenState extends ConsumerState<RecordScreen> {
   final AudioRecorderService _recorder = AudioRecorderService();
+  final WhisperService _whisperService = WhisperService();
   Timer? _timer;
+  bool _isProcessing = false;
+  String? _error;
 
   @override
   void dispose() {
     _timer?.cancel();
     _recorder.dispose();
+    _whisperService.dispose();
     super.dispose();
   }
 
@@ -37,6 +42,11 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   }
 
   Future<void> _startRecording() async {
+    setState(() {
+      _error = null;
+      _isProcessing = false;
+    });
+
     try {
       await _recorder.startRecording();
       _timer?.cancel();
@@ -45,40 +55,53 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       });
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
+        setState(() => _error = 'Microphone access denied');
       }
     }
   }
 
   Future<void> _stopRecording() async {
     _timer?.cancel();
+    setState(() => _isProcessing = true);
 
     try {
       final path = await _recorder.stopRecording();
-      if (path == null) return;
+      if (path == null) {
+        setState(() {
+          _isProcessing = false;
+          _error = 'No audio recorded';
+        });
+        return;
+      }
 
-      // Convert to whisper.cpp format
+      // Convert to whisper.cpp format (16kHz mono 16-bit WAV)
       final wavPath = await WavConverter.convertToWhisperFormat(path);
 
-      // TODO: Call whisper.cpp FFI to transcribe
-      await Future.delayed(const Duration(seconds: 1));
+      // Transcribe using whisper.cpp FFI
+      final transcription = await _whisperService.transcribe(wavPath);
 
       if (!mounted) return;
+      setState(() => _isProcessing = false);
 
-      // Navigate to preview with transcription
+      // Handle no speech detected
+      if (transcription.isEmpty || transcription.contains('[No speech')) {
+        setState(() => _error = 'No speech detected. Try again.');
+        return;
+      }
+
+      // Navigate to preview with transcription for review
+      if (!mounted) return;
       Navigator.pushNamed(
         context,
         PreviewScreen.route,
-        arguments: 'Sample transcribed task',
+        arguments: transcription,
       );
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error processing: $e')),
-        );
-      }
+      if (!mounted) return;
+      setState(() {
+        _isProcessing = false;
+        _error = 'Transcription failed: $e';
+      });
     }
   }
 
@@ -112,48 +135,63 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
             _buildStateIndicator(),
             const SizedBox(height: 48),
 
-            // Record button
+            // Record button (disabled while processing)
             GestureDetector(
-              onTap: _toggleRecording,
+              onTap: _isProcessing ? null : _toggleRecording,
               child: Container(
                 width: 120,
                 height: 120,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: _recorder.state == RecordingState.recording
-                      ? Colors.red.withOpacity(0.1)
-                      : Colors.grey.shade100,
+                  color: _isProcessing
+                      ? Colors.grey.withOpacity(0.3)
+                      : _recorder.state == RecordingState.recording
+                          ? Colors.red.withOpacity(0.1)
+                          : Colors.grey.shade100,
                   border: Border.all(
-                    color: _recorder.state == RecordingState.recording
-                        ? Colors.red
-                        : Colors.grey.shade300,
+                    color: _isProcessing
+                        ? Colors.grey
+                        : _recorder.state == RecordingState.recording
+                            ? Colors.red
+                            : Colors.grey.shade300,
                     width: _recorder.state == RecordingState.recording ? 4 : 2,
                   ),
                 ),
-                child: Icon(
-                  _recorder.state == RecordingState.recording
-                      ? Icons.stop
-                      : Icons.mic,
-                  size: 48,
-                  color: _recorder.state == RecordingState.recording
-                      ? Colors.red
-                      : Colors.grey.shade700,
-                ),
+                child: _isProcessing
+                    ? const SizedBox(
+                        width: 40,
+                        height: 40,
+                        child: CircularProgressIndicator(strokeWidth: 3),
+                      )
+                    : Icon(
+                        _recorder.state == RecordingState.recording
+                            ? Icons.stop
+                            : Icons.mic,
+                        size: 48,
+                        color: _recorder.state == RecordingState.recording
+                            ? Colors.red
+                            : Colors.grey.shade700,
+                      ),
               ),
             ),
             const SizedBox(height: 16),
 
+            // Status text
             Text(
-              _recorder.state == RecordingState.recording
-                  ? 'Tap to stop'
-                  : 'Tap to record',
+              _isProcessing
+                  ? 'Transcribing...'
+                  : _recorder.state == RecordingState.recording
+                      ? 'Tap to stop'
+                      : 'Tap to record',
               style: TextStyle(
-                color: Colors.grey.shade600,
+                color: _isProcessing
+                    ? Colors.indigo
+                    : Colors.grey.shade600,
                 fontSize: 16,
               ),
             ),
 
-            if (_recorder.state == RecordingState.error) ...[
+            if (_recorder.state == RecordingState.error || _error != null) ...[
               const SizedBox(height: 24),
               Container(
                 margin: const EdgeInsets.symmetric(horizontal: 24),
@@ -164,7 +202,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                   border: Border.all(color: Colors.red.shade200),
                 ),
                 child: Text(
-                  'Recording failed. Try again.',
+                  _error ?? 'Recording failed. Try again.',
                   style: TextStyle(color: Colors.red.shade700),
                   textAlign: TextAlign.center,
                 ),
@@ -188,7 +226,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   }
 
   Widget _stateDot(RecordingState state, String label) {
-    final isActive = _recorder.state == state;
+    final isActive = _recorder.state == state ||
+        (_isProcessing && state == RecordingState.processing);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Column(

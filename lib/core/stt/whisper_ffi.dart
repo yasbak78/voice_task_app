@@ -115,16 +115,83 @@ class WhisperFFI {
   }
 }
 
-/// Whisper full parameters struct (matches whisper.cpp whisper_full_params)
+/// Whisper full parameters struct — matches whisper.cpp `whisper_full_params`.
+/// 
+/// Must be kept in sync with whisper.cpp struct layout.
+/// Reference: https://github.com/ggerganov/whisper.cpp/blob/master/include/whisper.h
 base class WhisperFullParams extends Struct {
   @Int32()
-  external int strategy;
+  external int strategy;         // whisper_sampling_strategy
 
   @Int32()
   external int nThreads;
 
-  @Float()
-  external double audioCtx;
+  @Int32()
+  external int nMaxTextCtx;
 
-  // ... additional fields as needed
+  @Int32()
+  external int offsetMs;         // start offset in ms
+
+  @Int32()
+  external int durationMs;       // audio duration to process in ms
+
+  @Int32()
+  external int translate;        // 0 = transcribe, 1 = translate
+
+  @Int32()
+  external int noContext;        // 1 = do not use past transcription
+
+  @Int32()
+  external int noTimestamps;     // 1 = do not output timestamps
+
+  external Pointer<Utf8> language; // "en", "auto", etc.
+
+  @Int32()
+  external int detectLanguage;   // 1 = detect language automatically
+
+  @Int32()
+  external int suppressBlank;    // 1 = suppress blank outputs
+
+  @Int32()
+  external int suppressNonSpeechTokens; // 1 = suppress non-speech tokens
+
+  @Float()
+  external double temperature;
+
+  @Float()
+  external double maxInitialTs;
+
+  @Float()
+  external double lengthPenalty;
+
+  @Float()
+  external double temperatureInc;
+
+  @Float()
+  external double entropyThresh;
+
+  @Float()
+  external double logProbThresh;
+
+  @Float()
+  external double noSpeechThresh;
+
+  // Callbacks — stored as pointers (no annotations on Pointer fields)
+  external Pointer<Void> newSegmentCallback;
+  external Pointer<Void> newSegmentCallbackUserData;
+  external Pointer<Void> progressCallback;
+  external Pointer<Void> progressCallbackUserData;
+  external Pointer<Void> abortCallback;
+  external Pointer<Void> abortCallbackUserData;
+
+  // Beam search
+  @Int32()
+  external int beamSize;
+
+  @Int32()
+  external int bestOf;
+
+  // Greedy
+  @Int32()
+  external int patience;
 }
