@@ -7,6 +7,7 @@ import 'screens/settings/settings_screen.dart';
 import 'screens/task_detail/task_detail_screen.dart';
 import 'screens/preview/preview_screen.dart';
 import 'screens/calendar/calendar_screen.dart';
+import 'screens/record/record_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -29,7 +30,7 @@ class VoiceTaskApp extends StatelessWidget {
         '/': (context) => const TaskListScreen(),
         '/settings': (context) => const SettingsScreen(),
         '/calendar': (context) => const CalendarScreen(),
-        '/record': (context) => _placeholder('Record'),
+        '/record': (context) => const RecordScreen(),
         PreviewScreen.route: (context) => const PreviewScreen(transcription: 'Sample task for testing'),
       },
       onGenerateRoute: (settings) {
