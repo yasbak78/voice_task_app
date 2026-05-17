@@ -45,6 +45,7 @@ class Settings extends Table {
 @DriftDatabase(tables: [Tasks, CalendarEvents, Settings], daos: [TaskDao, CalendarEventDao, SettingsDao])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
+  AppDatabase.test(QueryExecutor e) : super(e);
 
   @override
   int get schemaVersion => 1;

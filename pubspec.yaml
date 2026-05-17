@@ -44,6 +44,7 @@ dependencies:
   table_calendar: ^3.1.0
   ffi: ^2.1.0
   uuid: ^4.4.0
+  sqlite3_flutter_libs: ^0.5.42
 
 dev_dependencies:
   flutter_test:

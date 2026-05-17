@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'core/database/app_database.dart';
 import 'screens/home/task_list_screen.dart';
+import 'screens/settings/settings_screen.dart';
+import 'screens/task_detail/task_detail_screen.dart';
 
 void main() {
   runApp(const ProviderScope(child: VoiceTaskApp()));
@@ -19,10 +22,18 @@ class VoiceTaskApp extends StatelessWidget {
       ),
       routes: {
         '/': (context) => const TaskListScreen(),
+        '/settings': (context) => const SettingsScreen(),
         '/calendar': (context) => _placeholder('Calendar'),
-        '/settings': (context) => _placeholder('Settings'),
         '/record': (context) => _placeholder('Record'),
-        '/task-detail': (context) => _placeholder('Task Detail'),
+      },
+      onGenerateRoute: (settings) {
+        if (settings.name == '/task-detail' && settings.arguments is Task) {
+          return MaterialPageRoute(
+            builder: (_) => TaskDetailScreen(
+                task: settings.arguments as Task),
+          );
+        }
+        return null;
       },
     );
   }
