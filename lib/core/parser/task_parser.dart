@@ -64,35 +64,42 @@ enum Priority { high, medium, low }
 class TaskParser {
   // Priority keywords
   static final _highPriority = RegExp(
-    r'(?i)\b(high\s*pri(ority)?|urgent|asap|critical|emergency|immediately|right now|must do|important)\b',
+    r'\b(high\s*pri(ority)?|urgent|asap|critical|emergency|immediately|right now|must do|important)\b',
+    caseSensitive: false,
   );
 
   static final _lowPriority = RegExp(
-    r'(?i)\b(low\s*pri(ority)?|whenever|eventually|someday|nice to have|no rush)\b',
+    r'\b(low\s*pri(ority)?|whenever|eventually|someday|nice to have|no rush)\b',
+    caseSensitive: false,
   );
 
   // Project keywords
   static final _projectPattern = RegExp(
     r'(?:for|on|in|under|from)\s+(?:the\s+)?(?:project\s+)?(\w[\w\s]*?(?:project|app|site|team|client|course|work|home|school|personal|gym|health|finance|kitchen|garden))\b',
+    caseSensitive: false,
   );
 
   static final _projectPrefix = RegExp(
     r'^\s*(?:project|proj|for|under)\s*[:\-]\s*',
+    caseSensitive: false,
   );
 
   // Reminder keywords
   static final _reminderPattern = RegExp(
-    r'(?i)\b(remind\s*me|set\s*(?:a\s*)?reminder|alarm|notify\s*me|alert\s*me)\b',
+    r'\b(remind\s*me|set\s*(?:a\s*)?reminder|alarm|notify\s*me|alert\s*me)\b',
+    caseSensitive: false,
   );
 
   // Filler words to strip
   static final _fillerPattern = RegExp(
-    r'(?i)^(um\s*|uh\s*|so\s*|like\s*|hey\s*|hi\s*|hello\s*|okay\s*|ok\s*|alright\s*|can\s*you\s*|please\s*|I\s*need\s*to\s*|I\s*want\s*to\s*|I\s*should\s*|let\s*me\s*|gonna\s*|gotta\s*|just\s*)+',
+    r'^(um\s*|uh\s*|so\s*|like\s*|hey\s*|hi\s*|hello\s*|okay\s*|ok\s*|alright\s*|can\s*you\s*|please\s*|I\s*need\s*to\s*|I\s*want\s*to\s*|I\s*wanna\s*|wanna\s*|I\s*should\s*|let\s*me\s*|gonna\s*|gotta\s*|just\s*)+',
+    caseSensitive: false,
   );
 
   // Time patterns
   static final _timePattern = RegExp(
-    r'(?i)\b(at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)\b',
+    r'\b(at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)\b',
+    caseSensitive: false,
   );
 
   // Relative date patterns
@@ -142,31 +149,26 @@ class TaskParser {
     return _dayOffsetFromNow(targetWeekday) + 7;
   }
 
-  // Multi-intent splitting
-  static final _intentSplitPattern = RegExp(
-    r'(?i)(?:^|[.!?;]+)\s*(?:and\s+|also\s+|then\s+|plus\s+|next\s+|oh\s*[,!]*\s*|wait\s*[,!]*\s*)+',
-  );
-
   /// Parse a single voice transcription into a structured task.
   static ParsedTask parse(String input) {
     var text = input.trim();
 
     // Strip filler words
-    text = _fillerPattern.replaceFirst(text, '').trim();
+    text = text.replaceFirst(_fillerPattern, '').trim();
 
     // Extract priority
     final priority = _extractPriority(text);
-    text = _highPriority.replaceFirst(text, '').trim();
-    text = _lowPriority.replaceFirst(text, '').trim();
+    text = text.replaceFirst(_highPriority, '').trim();
+    text = text.replaceFirst(_lowPriority, '').trim();
 
     // Extract project
     String? project = _extractProject(text);
-    text = _projectPattern.replaceAll(text, '').trim();
-    text = _projectPrefix.replaceAll(text, '').trim();
+    text = text.replaceAll(_projectPattern, '').trim();
+    text = text.replaceAll(_projectPrefix, '').trim();
 
     // Extract reminder flag
     final hasReminder = _reminderPattern.hasMatch(text);
-    text = _reminderPattern.replaceAll(text, '').trim();
+    text = text.replaceAll(_reminderPattern, '').trim();
 
     // Extract time
     DateTime? dueTime;
@@ -186,6 +188,10 @@ class TaskParser {
         dueTime.hour,
         dueTime.minute,
       );
+    } else if (dueTime != null) {
+      // Time without date -> today + time
+      final now = DateTime.now();
+      dueDate = DateTime(now.year, now.month, now.day, dueTime.hour, dueTime.minute);
     }
 
     // Clean up remaining text for title
@@ -297,8 +303,8 @@ class TaskParser {
 
     // Try parsing explicit date patterns (e.g., "Jan 15", "15/03/2025")
     final explicitPatterns = [
-      RegExp(r'(?i)(?:on\s+)?(\w+ \d{1,2})(?:st|nd|rd|th)?\b'),
-      RegExp(r'(?i)(\d{1,2}[/\-]\d{1,2}(?:[/\-]\d{2,4})?)'),
+      RegExp(r'(?:on\s+)?(\w+ \d{1,2})(?:st|nd|rd|th)?\b'),
+      RegExp(r'(\d{1,2}[/\-]\d{1,2}(?:[/\-]\d{2,4})?)'),
     ];
 
     for (final pattern in explicitPatterns) {
@@ -353,7 +359,7 @@ class TaskParser {
 
   static String _cleanTitle(String text) {
     // Remove trailing filler
-    final trailingFiller = RegExp(r'(?i)\s+(please|thanks|thank you|ok|okay|yeah)\s*\.?$');
+    final trailingFiller = RegExp(r'\s+(please|thanks|thank you|ok|okay|yeah)\s*\.?$', caseSensitive: false);
     text = text.replaceFirst(trailingFiller, '').trim();
 
     // Capitalize first letter
@@ -385,30 +391,68 @@ class TaskParser {
   }
 
   static List<String> _splitIntents(String input) {
-    final segments = _intentSplitPattern.split(input);
-    if (segments.length > 1) {
-      return segments.where((s) => s.trim().isNotEmpty).toList();
+    // Use allMatches to find split positions
+    final splitRegex = RegExp(
+      r'(?:^|[.!?;]+)\s*(?:and\s+|also\s+|then\s+|plus\s+|next\s+|oh\s*[,!]*\s*|wait\s*[,!]*\s*)+',
+      caseSensitive: false,
+    );
+    final matches = splitRegex.allMatches(input);
+
+    if (matches.isEmpty) {
+      // Try splitting on "and" between task-like phrases
+      final andRegex = RegExp(r'\s+and\s+(?:also\s+)?', caseSensitive: false);
+      final andMatches = andRegex.allMatches(input);
+      if (andMatches.isNotEmpty) {
+        final segments = <String>[];
+        int lastEnd = 0;
+        for (final m in andMatches) {
+          final segment = input.substring(lastEnd, m.start).trim();
+          if (segment.isNotEmpty && segment.length > 5) {
+            segments.add(segment);
+          }
+          lastEnd = m.end;
+        }
+        final remainder = input.substring(lastEnd).trim();
+        if (remainder.isNotEmpty && remainder.length > 5) {
+          segments.add(remainder);
+        }
+        if (segments.length > 1) return segments;
+      }
+      return [input];
     }
 
-    // Try splitting on "and" between task-like phrases
-    final andSegments = RegExp(r'(?i)\s+and\s+(?:also\s+)?').split(input);
-    if (andSegments.length > 1 &&
-        andSegments.every((s) => s.trim().length > 5)) {
-      return andSegments.where((s) => s.trim().isNotEmpty).toList();
+    final segments = <String>[];
+    int lastEnd = 0;
+    for (final m in matches) {
+      final segment = input.substring(lastEnd, m.start).trim();
+      if (segment.isNotEmpty) {
+        segments.add(segment);
+      }
+      lastEnd = m.end;
+    }
+    final remainder = input.substring(lastEnd).trim();
+    if (remainder.isNotEmpty) {
+      segments.add(remainder);
     }
 
-    return [input];
+    return segments;
   }
 
   static bool _isConversational(String text) {
+    // Strip common punctuation for matching
+    final cleaned = text.replaceAll(RegExp(r'[?!,.]'), '').trim();
     final conversationalPatterns = RegExp(
-      r"(?i)^(how are you|what is up|hi there|good morning|good evening|"
-      r"good night|hey how is it going|see you later|talk to you|"
-      r"thanks for asking|nice to meet you|i am fine|i am good|i'm good)$",
+      r"^(how are you|hey how are you|what'?s up|hi there|hey there|good morning|good evening|"
+      r"good night|hey how is it going|how'?s it going|see you later|talk to you|"
+      r"thanks for asking|nice to meet you|i am fine|i am good|im good|"
+      r"thank you|thank you so much|thanks|thanks a lot|hey|hello)$",
+      caseSensitive: false,
     );
-    return conversationalPatterns.hasMatch(text) &&
-        !RegExp(r"(?i)\b(task|do|finish|remind|call|email|schedule|meeting|"
-                r"deadline|submit|buy|create|send|book|write|review|fix)\b")
+    return conversationalPatterns.hasMatch(cleaned) &&
+        !RegExp(r"\b(task|do|finish|remind|call|email|schedule|meeting|"
+                r"deadline|submit|buy|create|send|book|write|review|fix)\b",
+          caseSensitive: false,
+        )
             .hasMatch(text);
   }
 
@@ -422,7 +466,7 @@ class TaskParser {
     if (text.contains('good evening') || text.contains('good night')) {
       return 'Good evening! Anything you need to capture before wrapping up?';
     }
-    if (RegExp(r'(?i)(thanks|thank you)').hasMatch(text)) {
+    if (RegExp(r'(thanks|thank you)', caseSensitive: false).hasMatch(text)) {
       return "You're welcome! Let me know if you need anything.";
     }
     return null;
