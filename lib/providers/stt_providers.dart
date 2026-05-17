@@ -30,12 +30,11 @@ final recordingDurationProvider = Provider<Duration>((ref) {
 
 /// Provider for running transcription on the last recording.
 final transcriptionProvider = FutureProvider.autoDispose<String?>((ref) async {
-  final service = ref.watch(whisperServiceProvider);
   final recorder = ref.watch(audioRecorderProvider);
+  final lastPath = recorder.lastRecordingPath;
   
-  // Get the last recording path
-  final path = await recorder.stopRecording();
-  if (path == null) return null;
+  if (lastPath == null) return null;
   
-  return service.transcribe(path);
-}).overrideWith((ref) async => null);
+  final service = ref.watch(whisperServiceProvider);
+  return service.transcribe(lastPath);
+});

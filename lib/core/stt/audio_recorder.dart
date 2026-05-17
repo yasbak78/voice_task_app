@@ -7,12 +7,14 @@ enum RecordingState { idle, recording, processing, done, error }
 
 class AudioRecorderService {
   final AudioRecorder _recorder = AudioRecorder();
-  Timer? _timer;
-  Duration _duration = Duration.zero;
   RecordingState _state = RecordingState.idle;
+  Duration _duration = Duration.zero;
+  Timer? _timer;
+  String? _lastRecordingPath;
 
   RecordingState get state => _state;
   Duration get duration => _duration;
+  String? get lastRecordingPath => _lastRecordingPath;
   Stream<Amplitude> get amplitudeStream => _recorder.onAmplitudeChanged(const Duration(milliseconds: 250));
 
   Future<bool> _checkPermission() async {
@@ -60,7 +62,10 @@ class AudioRecorderService {
     _state = RecordingState.processing;
     
     final path = await _recorder.stop();
-    _state = RecordingState.done;
+    if (path != null) {
+      _lastRecordingPath = path;
+    }
+    _state = path != null ? RecordingState.done : RecordingState.error;
     return path;
   }
 
