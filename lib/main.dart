@@ -4,6 +4,7 @@ import 'core/database/app_database.dart';
 import 'screens/home/task_list_screen.dart';
 import 'screens/settings/settings_screen.dart';
 import 'screens/task_detail/task_detail_screen.dart';
+import 'screens/preview/preview_screen.dart';
 
 void main() {
   runApp(const ProviderScope(child: VoiceTaskApp()));
@@ -25,6 +26,7 @@ class VoiceTaskApp extends StatelessWidget {
         '/settings': (context) => const SettingsScreen(),
         '/calendar': (context) => _placeholder('Calendar'),
         '/record': (context) => _placeholder('Record'),
+        PreviewScreen.route: (context) => const PreviewScreen(transcription: 'Sample task for testing'),
       },
       onGenerateRoute: (settings) {
         if (settings.name == '/task-detail' && settings.arguments is Task) {
