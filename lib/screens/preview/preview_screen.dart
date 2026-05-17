@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:drift/drift.dart' show Value;
 import 'package:voice_task_app/core/parser/task_parser.dart' as parser show TaskParser, ParsedTask, Priority;
 import 'package:voice_task_app/core/database/app_database.dart';
+import 'package:voice_task_app/core/notifications/notification_service.dart';
 import 'package:voice_task_app/models/task_model.dart';
 import 'package:voice_task_app/providers/task_providers.dart';
 
@@ -83,6 +84,20 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
     );
 
     await dao.createTask(taskCompanion);
+
+    // Schedule notification if reminder enabled and due date set
+    if (_hasReminder && _dueDate != null) {
+      final taskId = _generateId();
+      await NotificationService.instance.scheduleTaskNotification(
+        id: int.parse(taskId.substring(taskId.length - 8)),
+        title: 'Task Due: ${_titleController.text.trim()}',
+        body: _notesController.text.trim().isEmpty
+            ? 'This task is due now'
+            : _notesController.text.trim(),
+        scheduledDate: _dueDate!,
+        taskId: taskId,
+      );
+    }
 
     if (!mounted) return;
     setState(() => _isSaving = false);

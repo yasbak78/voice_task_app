@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/database/app_database.dart';
+import 'core/notifications/notification_service.dart';
 import 'screens/home/task_list_screen.dart';
 import 'screens/settings/settings_screen.dart';
 import 'screens/task_detail/task_detail_screen.dart';
 import 'screens/preview/preview_screen.dart';
 import 'screens/calendar/calendar_screen.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await NotificationService.instance.init();
   runApp(const ProviderScope(child: VoiceTaskApp()));
 }
 
