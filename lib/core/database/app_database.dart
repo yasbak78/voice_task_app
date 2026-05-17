@@ -5,6 +5,9 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 part 'app_database.g.dart';
+part 'daos/task_dao.dart';
+part 'daos/calendar_event_dao.dart';
+part 'daos/settings_dao.dart';
 
 enum Priority { high, medium, low }
 enum TaskStatus { pending, inProgress, done, archived }
@@ -39,12 +42,17 @@ class Settings extends Table {
   TextColumn get value => text()();
 }
 
-@DriftDatabase(tables: [Tasks, CalendarEvents, Settings])
+@DriftDatabase(tables: [Tasks, CalendarEvents, Settings], daos: [TaskDao, CalendarEventDao, SettingsDao])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
   int get schemaVersion => 1;
+
+  TaskDao get tasksDao => TaskDao(this);
+  CalendarEventDao get calendarDao => CalendarEventDao(this);
+  @override
+  SettingsDao get settingsDao => SettingsDao(this);
 }
 
 LazyDatabase _openConnection() {

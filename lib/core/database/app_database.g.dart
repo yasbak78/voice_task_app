@@ -1104,6 +1104,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $TasksTable tasks = $TasksTable(this);
   late final $CalendarEventsTable calendarEvents = $CalendarEventsTable(this);
   late final $SettingsTable settings = $SettingsTable(this);
+  late final TaskDao taskDao = TaskDao(this as AppDatabase);
+  late final CalendarEventDao calendarEventDao =
+      CalendarEventDao(this as AppDatabase);
+  late final SettingsDao settingsDao = SettingsDao(this as AppDatabase);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -1691,4 +1695,14 @@ class $AppDatabaseManager {
       $$CalendarEventsTableTableManager(_db, _db.calendarEvents);
   $$SettingsTableTableManager get settings =>
       $$SettingsTableTableManager(_db, _db.settings);
+}
+
+mixin _$TaskDaoMixin on DatabaseAccessor<AppDatabase> {
+  $TasksTable get tasks => attachedDatabase.tasks;
+}
+mixin _$CalendarEventDaoMixin on DatabaseAccessor<AppDatabase> {
+  $CalendarEventsTable get calendarEvents => attachedDatabase.calendarEvents;
+}
+mixin _$SettingsDaoMixin on DatabaseAccessor<AppDatabase> {
+  $SettingsTable get settings => attachedDatabase.settings;
 }
