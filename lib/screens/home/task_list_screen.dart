@@ -305,6 +305,33 @@ class TaskListScreen extends ConsumerWidget {
     final titleController = TextEditingController(text: task.title);
     final notesController = TextEditingController(text: task.notes ?? '');
     final isDone = task.completedAt != null;
+    DateTime? selectedDueDate = task.dueDate;
+
+    Future<void> pickTime() async {
+      final pickedDate = selectedDueDate == null
+          ? await showDatePicker(
+              context: context,
+              initialDate: DateTime.now(),
+              firstDate: DateTime.now().subtract(const Duration(days: 365)),
+              lastDate: DateTime.now().add(const Duration(days: 365)),
+            )
+          : null;
+      if (!context.mounted) return; // ignore: use_build_context_synchronously
+      DateTime baseDate = pickedDate ?? selectedDueDate ?? DateTime.now();
+      final pickedTime = await showTimePicker(
+        context: context,
+        initialTime: TimeOfDay.fromDateTime(baseDate),
+      );
+      if (pickedTime != null) {
+        selectedDueDate = DateTime(
+          baseDate.year,
+          baseDate.month,
+          baseDate.day,
+          pickedTime.hour,
+          pickedTime.minute,
+        );
+      }
+    }
 
     showModalBottomSheet(
       context: context,
@@ -312,97 +339,141 @@ class TaskListScreen extends ConsumerWidget {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(ctx).viewInsets.bottom,
-          left: 16,
-          right: 16,
-          top: 16,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Text(
-                  'Quick Edit',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) => Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom,
+            left: 16,
+            right: 16,
+            top: 16,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    'Quick Edit',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: titleController,
+                decoration: const InputDecoration(
+                  labelText: 'Title',
+                  border: OutlineInputBorder(),
+                ),
+                autofocus: true,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: notesController,
+                decoration: const InputDecoration(
+                  labelText: 'Notes',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 3,
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.calendar_today, size: 18),
+                      label: Text(
+                        selectedDueDate == null
+                            ? 'Set due date'
+                            : _formatQuickEditDate(selectedDueDate!),
                       ),
-                ),
-                const Spacer(),
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.pop(ctx),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: titleController,
-              decoration: const InputDecoration(
-                labelText: 'Title',
-                border: OutlineInputBorder(),
-              ),
-              autofocus: true,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: notesController,
-              decoration: const InputDecoration(
-                labelText: 'Notes',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 3,
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: () {
-                      if (titleController.text.trim().isEmpty) return;
-                      final dao = ref.read(taskDaoProvider);
-                      (dao.update(dao.tasks)
-                            ..where((t) => t.id.equals(task.id)))
-                          .write(TasksCompanion(
-                        title: Value(titleController.text.trim()),
-                        notes: Value(notesController.text.trim().isEmpty
-                            ? null
-                            : notesController.text.trim()),
-                      ));
-                      AppHaptics.complete();
-                      Navigator.pop(ctx);
-                    },
-                    icon: const Icon(Icons.save_rounded),
-                    label: const Text('Save'),
+                      onPressed: () async {
+                        await pickTime();
+                        setSheetState(() {});
+                      },
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () async {
-                      final dao = ref.read(taskDaoProvider);
-                      if (isDone) {
-                        await dao.markIncomplete(task.id);
-                      } else {
-                        await dao.markComplete(task.id);
-                      }
-                      AppHaptics.complete();
-                      if (ctx.mounted) Navigator.pop(ctx);
-                    },
-                    icon: Icon(isDone ? Icons.undo_rounded : Icons.check_rounded),
-                    label: Text(isDone ? 'Undo Done' : 'Mark Done'),
+                  if (selectedDueDate != null)
+                    const SizedBox(width: 8),
+                  if (selectedDueDate != null)
+                    IconButton(
+                      icon: const Icon(Icons.clear, size: 20),
+                      onPressed: () {
+                        selectedDueDate = null;
+                        setSheetState(() {});
+                      },
+                      tooltip: 'Remove due date',
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () {
+                        if (titleController.text.trim().isEmpty) return;
+                        final dao = ref.read(taskDaoProvider);
+                        (dao.update(dao.tasks)
+                              ..where((t) => t.id.equals(task.id)))
+                            .write(TasksCompanion(
+                          title: Value(titleController.text.trim()),
+                          notes: Value(notesController.text.trim().isEmpty
+                              ? null
+                              : notesController.text.trim()),
+                          dueDate: Value(selectedDueDate),
+                        ));
+                        AppHaptics.complete();
+                        Navigator.pop(ctx);
+                      },
+                      icon: const Icon(Icons.save_rounded),
+                      label: const Text('Save'),
+                    ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-          ],
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        final dao = ref.read(taskDaoProvider);
+                        if (isDone) {
+                          await dao.markIncomplete(task.id);
+                        } else {
+                          await dao.markComplete(task.id);
+                        }
+                        AppHaptics.complete();
+                        if (ctx.mounted) Navigator.pop(ctx);
+                      },
+                      icon: Icon(isDone ? Icons.undo_rounded : Icons.check_rounded),
+                      label: Text(isDone ? 'Undo Done' : 'Mark Done'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  String _formatQuickEditDate(DateTime date) {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final base = '${months[date.month - 1]} ${date.day}';
+    if (date.hour != 0 || date.minute != 0) {
+      final hour = date.hour.toString().padLeft(2, '0');
+      final minute = date.minute.toString().padLeft(2, '0');
+      return '$base $hour:$minute';
+    }
+    return base;
   }
 
   void _showFilterSheet(BuildContext context) {

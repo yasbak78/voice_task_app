@@ -78,14 +78,35 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
   }
 
   Future<void> _pickDueDate() async {
-    final picked = await showDatePicker(
+    final pickedDate = await showDatePicker(
       context: context,
       initialDate: _selectedDueDate ?? DateTime.now(),
       firstDate: DateTime.now().subtract(const Duration(days: 365)),
       lastDate: DateTime.now().add(const Duration(days: 365)),
     );
-    if (picked != null) {
-      setState(() => _selectedDueDate = picked);
+    if (pickedDate != null) {
+      if (!mounted) return;
+      // After picking date, also pick time
+      final pickedTime = await showTimePicker(
+        context: context,
+        initialTime: TimeOfDay.fromDateTime(_selectedDueDate ?? DateTime.now()),
+      );
+      if (pickedTime != null && mounted) {
+        setState(() {
+          _selectedDueDate = DateTime(
+            pickedDate.year,
+            pickedDate.month,
+            pickedDate.day,
+            pickedTime.hour,
+            pickedTime.minute,
+          );
+        });
+      } else if (pickedTime == null && mounted) {
+        // User cancelled time — keep just the date at midnight
+        setState(() {
+          _selectedDueDate = DateTime(pickedDate.year, pickedDate.month, pickedDate.day);
+        });
+      }
     }
   }
 
@@ -493,7 +514,14 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
 
   String _formatDate(DateTime date) {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return '${months[date.month - 1]} ${date.day}, ${date.year}';
+    final base = '${months[date.month - 1]} ${date.day}, ${date.year}';
+    // Show time only if it's not midnight
+    if (date.hour != 0 || date.minute != 0) {
+      final hour = date.hour.toString().padLeft(2, '0');
+      final minute = date.minute.toString().padLeft(2, '0');
+      return '$base $hour:$minute';
+    }
+    return base;
   }
 
   String _formatDateTime(DateTime date) {
