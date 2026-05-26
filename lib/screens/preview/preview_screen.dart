@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:drift/drift.dart' show Value;
-import 'package:voice_task_app/core/parser/task_parser.dart' as parser show TaskParser, ParsedTask, Priority;
+import 'package:voice_task_app/core/haptics/app_haptics.dart';
+import 'package:voice_task_app/core/parser/task_parser.dart' as parser show TaskParser, ParsedTask;
 import 'package:voice_task_app/core/database/app_database.dart';
 import 'package:voice_task_app/core/notifications/notification_service.dart';
-import 'package:voice_task_app/models/task_model.dart';
 import 'package:voice_task_app/providers/task_providers.dart';
 
 /// Preview screen shown after voice parsing, before saving to DB.
-/// User can review/edit priority, project, due date, and notes.
+/// Shows the raw transcription at the top, then a list of parsed tasks
+/// that the user can review/edit before saving.
 class PreviewScreen extends ConsumerStatefulWidget {
   final String transcription;
 
@@ -20,107 +21,269 @@ class PreviewScreen extends ConsumerStatefulWidget {
   ConsumerState<PreviewScreen> createState() => _PreviewScreenState();
 }
 
-class _PreviewScreenState extends ConsumerState<PreviewScreen> {
-  late parser.ParsedTask _parsed;
-  late TextEditingController _titleController;
-  late TextEditingController _notesController;
-  late TextEditingController _projectController;
-  Priority _priority;
-  DateTime? _dueDate;
-  bool _hasReminder;
-  bool _isSaving = false;
+/// Mutable wrapper for editing a parsed task in the UI.
+class _EditableTask {
+  parser.ParsedTask parsed;
+  TextEditingController titleController;
+  TextEditingController notesController;
+  TextEditingController projectController;
+  Priority priority;
+  DateTime? dueDate;
+  DateTime? dueTime;
+  bool hasReminder;
+  bool checked; // whether to include this task when saving
 
-  _PreviewScreenState()
-      : _priority = Priority.medium,
-        _dueDate = null,
-        _hasReminder = false;
+  _EditableTask(this.parsed)
+      : titleController = TextEditingController(),
+        notesController = TextEditingController(),
+        projectController = TextEditingController(),
+        priority = Priority.medium,
+        dueDate = null,
+        dueTime = null,
+        hasReminder = false,
+        checked = true;
+
+  void syncFromParsed() {
+    titleController.text = parsed.title;
+    notesController.text = parsed.notes ?? '';
+    projectController.text = parsed.project ?? '';
+    priority = parsed.priority;
+    dueDate = parsed.dueDate;
+    dueTime = parsed.dueTime;
+    hasReminder = parsed.hasReminder;
+  }
+
+  /// Combined DateTime for saving to DB (date + time merged).
+  DateTime? get combinedDueDate {
+    if (dueDate == null && dueTime == null) return null;
+    if (dueDate != null && dueTime == null) return dueDate;
+    if (dueDate == null && dueTime != null) {
+      // Time only, no date -> today + time
+      final now = DateTime.now();
+      return DateTime(now.year, now.month, now.day, dueTime!.hour, dueTime!.minute);
+    }
+    // Both date and time -> merge
+    return DateTime(
+      dueDate!.year, dueDate!.month, dueDate!.day,
+      dueTime!.hour, dueTime!.minute,
+    );
+  }
+
+  parser.ParsedTask toParsed() {
+    return parser.ParsedTask(
+      title: titleController.text.trim(),
+      notes: notesController.text.trim().isEmpty ? null : notesController.text.trim(),
+      priority: priority,
+      project: projectController.text.trim().isEmpty ? null : projectController.text.trim(),
+      dueDate: combinedDueDate,
+      dueTime: dueTime,
+      hasReminder: hasReminder,
+    );
+  }
+
+  void dispose() {
+    titleController.dispose();
+    notesController.dispose();
+    projectController.dispose();
+  }
+}
+
+class _PreviewScreenState extends ConsumerState<PreviewScreen> {
+  final List<_EditableTask> _tasks = [];
+  String? _conversationalReply;
+  bool _isSaving = false;
+  bool _isInitialized = false;
 
   @override
   void initState() {
     super.initState();
-    _parsed = parser.TaskParser.parse(widget.transcription);
-    _titleController = TextEditingController(text: _parsed.title);
-    _notesController = TextEditingController(text: _parsed.notes ?? '');
-    _projectController = TextEditingController(text: _parsed.project ?? '');
-    _priority = _parsed.priority.toDbPriority();
-    _dueDate = _parsed.dueDate;
-    _hasReminder = _parsed.hasReminder;
+    _initialize();
+  }
+
+  void _initialize() {
+    final input = widget.transcription.trim();
+    if (input.isEmpty) {
+      _tasks.add(_EditableTask(const parser.ParsedTask(title: 'Untitled task'))
+        ..syncFromParsed());
+      _isInitialized = true;
+      return;
+    }
+
+    final result = parser.TaskParser.splitAndParse(input);
+
+    if (result.isConversational) {
+      _conversationalReply = result.conversationalReply;
+      _isInitialized = true;
+      return;
+    }
+
+    if (result.tasks.isEmpty) {
+      // Fallback: parse the whole input as a single task
+      final single = parser.TaskParser.parse(input);
+      final editable = _EditableTask(single)..syncFromParsed();
+      _tasks.add(editable);
+    } else {
+      for (final task in result.tasks) {
+        final editable = _EditableTask(task)..syncFromParsed();
+        _tasks.add(editable);
+      }
+    }
+    _isInitialized = true;
   }
 
   @override
   void dispose() {
-    _titleController.dispose();
-    _notesController.dispose();
-    _projectController.dispose();
+    for (final task in _tasks) {
+      task.dispose();
+    }
     super.dispose();
   }
 
-  Future<void> _pickDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _dueDate ?? DateTime.now(),
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
-    );
-    if (picked != null) {
-      setState(() => _dueDate = picked);
-    }
-  }
-
-  Future<void> _saveTask() async {
+  Future<void> _saveAll() async {
+    AppHaptics.complete();
     setState(() => _isSaving = true);
 
     final dao = ref.read(taskDaoProvider);
-    final taskCompanion = TasksCompanion(
-      id: Value(_generateId()),
-      title: Value(_titleController.text.trim()),
-      notes: _notesController.text.trim().isEmpty ? const Value.absent() : Value(_notesController.text.trim()),
-      priority: Value(_priority),
-      project: _projectController.text.trim().isEmpty ? const Value.absent() : Value(_projectController.text.trim()),
-      dueDate: _dueDate != null ? Value(_dueDate) : const Value.absent(),
-      isCalendarEvent: Value(_hasReminder),
-      status: Value(TaskStatus.pending),
-      createdAt: Value(DateTime.now()),
-    );
+    int savedCount = 0;
 
-    await dao.createTask(taskCompanion);
+    for (final editable in _tasks) {
+      if (!editable.checked) continue;
 
-    // Schedule notification if reminder enabled and due date set
-    if (_hasReminder && _dueDate != null) {
-      final taskId = _generateId();
-      await NotificationService.instance.scheduleTaskNotification(
-        id: int.parse(taskId.substring(taskId.length - 8)),
-        title: 'Task Due: ${_titleController.text.trim()}',
-        body: _notesController.text.trim().isEmpty
-            ? 'This task is due now'
-            : _notesController.text.trim(),
-        scheduledDate: _dueDate!,
-        taskId: taskId,
+      final parsed = editable.toParsed();
+      if (parsed.title.isEmpty) continue;
+
+      final taskCompanion = TasksCompanion(
+        id: Value(_generateId()),
+        title: Value(parsed.title),
+        notes: parsed.notes != null ? Value(parsed.notes) : const Value.absent(),
+        priority: Value(parsed.priority),
+        project: parsed.project != null ? Value(parsed.project) : const Value.absent(),
+        dueDate: parsed.dueDate != null ? Value(parsed.dueDate) : const Value.absent(),
+        isCalendarEvent: Value(parsed.hasReminder),
+        status: Value(TaskStatus.pending),
+        createdAt: Value(DateTime.now()),
       );
+
+      await dao.createTask(taskCompanion);
+      savedCount++;
+
+      // Schedule notification if reminder enabled and due date set
+      if (parsed.hasReminder && parsed.dueDate != null) {
+        final taskId = _generateId();
+        await NotificationService.instance.scheduleTaskNotification(
+          id: int.parse(taskId.substring(taskId.length - 8)),
+          title: 'Task Due: ${parsed.title}',
+          body: parsed.notes ?? 'This task is due now',
+          scheduledDate: parsed.dueDate!,
+          taskId: taskId,
+        );
+      }
     }
 
     if (!mounted) return;
     setState(() => _isSaving = false);
 
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Task saved!')),
+      SnackBar(content: Text('$savedCount task${savedCount == 1 ? '' : 's'} saved!')),
     );
     Navigator.pushNamedAndRemoveUntil(context, '/', (r) => false);
   }
 
+  Future<void> _pickDate(int taskIndex) async {
+    AppHaptics.tap();
+    final editable = _tasks[taskIndex];
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: editable.dueDate ?? DateTime.now(),
+      firstDate: DateTime.now().subtract(const Duration(days: 1)),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (picked != null) {
+      setState(() {
+        // Preserve existing time when picking a new date
+        final existingHour = editable.dueDate?.hour ?? editable.dueTime?.hour;
+        final existingMinute = editable.dueDate?.minute ?? editable.dueTime?.minute;
+        if (existingHour != null && existingMinute != null) {
+          editable.dueDate = DateTime(picked.year, picked.month, picked.day, existingHour, existingMinute);
+        } else {
+          editable.dueDate = picked;
+        }
+      });
+    }
+  }
+
+  Future<void> _pickTime(int taskIndex) async {
+    AppHaptics.tap();
+    final editable = _tasks[taskIndex];
+    final now = DateTime.now();
+    final initialHour = editable.dueTime?.hour ?? editable.dueDate?.hour ?? now.hour;
+    final initialMinute = editable.dueTime?.minute ?? editable.dueDate?.minute ?? 0;
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(hour: initialHour, minute: initialMinute),
+    );
+    if (picked != null) {
+      setState(() {
+        editable.dueTime = DateTime(
+          now.year, now.month, now.day, picked.hour, picked.minute,
+        );
+        // If a date is set, merge the picked time into it
+        if (editable.dueDate != null) {
+          editable.dueDate = DateTime(
+            editable.dueDate!.year, editable.dueDate!.month, editable.dueDate!.day,
+            picked.hour, picked.minute,
+          );
+        }
+      });
+    }
+  }
+
   String _generateId() {
-    return DateTime.now().millisecondsSinceEpoch.toString();
+    return DateTime.now().millisecondsSinceEpoch.toString() + _tasks.hashCode.toString();
   }
 
   void _discard() {
+    AppHaptics.delete();
     Navigator.pushNamedAndRemoveUntil(context, '/', (r) => false);
   }
 
   @override
   Widget build(BuildContext context) {
+    if (!_isInitialized) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    // Conversational reply
+    if (_conversationalReply != null) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Reply'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.close),
+              onPressed: _discard,
+              tooltip: 'Close',
+            ),
+          ],
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(
+              _conversationalReply!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 18),
+            ),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Review Task'),
+        title: const Text('Review Tasks'),
         actions: [
           IconButton(
             icon: const Icon(Icons.close),
@@ -129,102 +292,221 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+      body: Column(
+        children: [
+          // Transcription card at top
+          _buildTranscriptionCard(),
+
+          // Task list
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.all(12),
+              itemCount: _tasks.length,
+              itemBuilder: (context, index) {
+                return _buildTaskCard(index);
+              },
+            ),
+          ),
+
+          // Save button at bottom
+          _buildSaveBar(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTranscriptionCard() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.mic, size: 16, color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 6),
+              Text(
+                'Transcription',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+              if (_tasks.length > 1) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primary,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '${_tasks.length} tasks',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Theme.of(context).colorScheme.onPrimary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            widget.transcription,
+            style: const TextStyle(fontSize: 14, fontStyle: FontStyle.italic),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTaskCard(int index) {
+    final editable = _tasks[index];
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _section('Title'),
-            TextField(
-              controller: _titleController,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                hintText: 'Task title',
-              ),
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+            // Checkbox + title
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Checkbox(
+                  value: editable.checked,
+                  onChanged: (v) => setState(() => editable.checked = v ?? false),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      TextField(
+                        controller: editable.titleController,
+                        decoration: const InputDecoration(
+                          border: UnderlineInputBorder(),
+                          hintText: 'Task title',
+                          isDense: true,
+                        ),
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 4),
+                      TextField(
+                        controller: editable.notesController,
+                        decoration: const InputDecoration(
+                          border: InputBorder.none,
+                          hintText: 'Notes (optional)',
+                          isDense: true,
+                        ),
+                        style: const TextStyle(fontSize: 13),
+                        maxLines: 2,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
 
-            _section('Priority'),
+            // Priority
             SegmentedButton<Priority>(
               segments: const [
                 ButtonSegment(value: Priority.high, label: Text('High'), icon: Icon(Icons.flag, color: Colors.red)),
                 ButtonSegment(value: Priority.medium, label: Text('Medium'), icon: Icon(Icons.flag, color: Colors.orange)),
                 ButtonSegment(value: Priority.low, label: Text('Low'), icon: Icon(Icons.flag, color: Colors.blue)),
               ],
-              selected: {_priority},
-              onSelectionChanged: (s) => setState(() => _priority = s.first),
+              selected: {editable.priority},
+              onSelectionChanged: (s) => setState(() {
+                AppHaptics.tap();
+                editable.priority = s.first;
+              }),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
 
-            _section('Project'),
+            // Project
             TextField(
-              controller: _projectController,
+              controller: editable.projectController,
               decoration: const InputDecoration(
                 border: OutlineInputBorder(),
                 hintText: 'Project (optional)',
+                isDense: true,
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
 
-            _section('Due Date'),
-            InkWell(
-              onTap: _pickDate,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey.shade300),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.calendar_today, size: 18),
-                    const SizedBox(width: 8),
-                    Text(_dueDate != null ? _formatDate(_dueDate!) : 'No date set'),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            _section('Reminder'),
-            SwitchListTile(
-              title: const Text('Enable reminder'),
-              value: _hasReminder,
-              onChanged: (v) => setState(() => _hasReminder = v),
-            ),
-            const SizedBox(height: 16),
-
-            _section('Notes'),
-            TextField(
-              controller: _notesController,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                hintText: 'Additional notes (optional)',
-              ),
-              maxLines: 3,
-            ),
-            const SizedBox(height: 24),
-
+            // Due date + time + reminder row
             Row(
               children: [
+                // Date chip
                 Expanded(
-                  child: OutlinedButton(
-                    onPressed: _discard,
-                    child: const Text('Discard'),
+                  child: InkWell(
+                    onTap: () => _pickDate(index),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade300),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.calendar_today, size: 16),
+                          const SizedBox(width: 6),
+                          Text(
+                            editable.dueDate != null ? _formatDate(editable.dueDate!) : 'No date',
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 8),
+                // Time chip
                 Expanded(
-                  child: FilledButton(
-                    onPressed: _isSaving ? null : _saveTask,
-                    child: _isSaving
-                        ? const SizedBox(
-                            width: 20, height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('Save Task'),
+                  child: InkWell(
+                    onTap: () => _pickTime(index),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade300),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.access_time, size: 16),
+                          const SizedBox(width: 6),
+                          Text(
+                            _formatTime(editable),
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
+                ),
+                const SizedBox(width: 8),
+                // Reminder switch
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Switch(
+                      value: editable.hasReminder,
+                      onChanged: (v) {
+                        AppHaptics.tap();
+                        setState(() => editable.hasReminder = v);
+                      },
+                    ),
+                    const Text('Reminder', style: TextStyle(fontSize: 13)),
+                  ],
                 ),
               ],
             ),
@@ -234,12 +516,43 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
     );
   }
 
-  Widget _section(String label) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(
-        label,
-        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+  Widget _buildSaveBar() {
+    final checkedCount = _tasks.where((t) => t.checked).length;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Text(
+            '$checkedCount of ${_tasks.length} tasks',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: FilledButton(
+              onPressed: (_isSaving || checkedCount == 0) ? null : _saveAll,
+              child: _isSaving
+                  ? const SizedBox(
+                      width: 20, height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Save All'),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -253,15 +566,14 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
     if (diff == 1) return 'Tomorrow';
     return '${d.day}/${d.month}/${d.year}';
   }
-}
 
-/// Extension to convert parser Priority to DB Priority.
-extension PriorityConverter on parser.Priority {
-  Priority toDbPriority() {
-    return switch (this) {
-      parser.Priority.high => Priority.high,
-      parser.Priority.low => Priority.low,
-      parser.Priority.medium => Priority.medium,
-    };
+  String _formatTime(_EditableTask editable) {
+    final hour = editable.dueTime?.hour ?? editable.dueDate?.hour;
+    final minute = editable.dueTime?.minute ?? editable.dueDate?.minute;
+    if (hour == null || minute == null) return 'No time';
+    final period = hour >= 12 ? 'PM' : 'AM';
+    final displayHour = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
+    final displayMinute = minute.toString().padLeft(2, '0');
+    return '$displayHour:$displayMinute $period';
   }
 }

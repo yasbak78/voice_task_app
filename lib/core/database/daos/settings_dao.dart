@@ -3,7 +3,7 @@ part of '../app_database.dart';
 @DriftAccessor(tables: [Settings])
 class SettingsDao extends DatabaseAccessor<AppDatabase>
     with _$SettingsDaoMixin {
-  SettingsDao(AppDatabase db) : super(db);
+  SettingsDao(super.db);
 
   Future<String?> getValue(String key) async {
     final row = await (select(settings)..where((s) => s.key.equals(key)))

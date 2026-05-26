@@ -3,7 +3,7 @@ part of '../app_database.dart';
 @DriftAccessor(tables: [CalendarEvents])
 class CalendarEventDao extends DatabaseAccessor<AppDatabase>
     with _$CalendarEventDaoMixin {
-  CalendarEventDao(AppDatabase db) : super(db);
+  CalendarEventDao(super.db);
 
   Future<List<CalendarEvent>> getEventsForDay(DateTime day) {
     final start = DateTime(day.year, day.month, day.day);

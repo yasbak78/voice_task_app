@@ -2,11 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/database/app_database.dart';
 import 'core/notifications/notification_service.dart';
-import 'screens/home/task_list_screen.dart';
-import 'screens/settings/settings_screen.dart';
+import 'screens/main_shell.dart';
 import 'screens/task_detail/task_detail_screen.dart';
 import 'screens/preview/preview_screen.dart';
-import 'screens/calendar/calendar_screen.dart';
 import 'screens/record/record_screen.dart';
 
 void main() async {
@@ -23,17 +21,20 @@ class VoiceTaskApp extends StatelessWidget {
     return MaterialApp(
       title: 'Voice Tasks',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2563EB)),
         useMaterial3: true,
       ),
+      home: const MainShell(),
       routes: {
-        '/': (context) => const TaskListScreen(),
-        '/settings': (context) => const SettingsScreen(),
-        '/calendar': (context) => const CalendarScreen(),
         '/record': (context) => const RecordScreen(),
-        PreviewScreen.route: (context) => const PreviewScreen(transcription: 'Sample task for testing'),
       },
       onGenerateRoute: (settings) {
+        if (settings.name == PreviewScreen.route) {
+          final transcription = settings.arguments as String? ?? '';
+          return MaterialPageRoute(
+            builder: (_) => PreviewScreen(transcription: transcription),
+          );
+        }
         if (settings.name == '/task-detail' && settings.arguments is Task) {
           return MaterialPageRoute(
             builder: (_) => TaskDetailScreen(
@@ -42,13 +43,6 @@ class VoiceTaskApp extends StatelessWidget {
         }
         return null;
       },
-    );
-  }
-
-  Widget _placeholder(String title) {
-    return Scaffold(
-      appBar: AppBar(title: Text(title)),
-      body: Center(child: Text('$title — Coming Soon')),
     );
   }
 }

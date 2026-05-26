@@ -24,6 +24,8 @@ class Tasks extends Table {
       textEnum<TaskStatus>().withDefault(Constant('pending'))();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get completedAt => dateTime().nullable()();
+  BoolColumn get hasReminder => boolean().withDefault(Constant(false))();
+  TextColumn get reminderTime => text().nullable()();
   BoolColumn get isCalendarEvent => boolean().withDefault(Constant(false))();
 }
 
@@ -45,7 +47,7 @@ class Settings extends Table {
 @DriftDatabase(tables: [Tasks, CalendarEvents, Settings], daos: [TaskDao, CalendarEventDao, SettingsDao])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
-  AppDatabase.test(QueryExecutor e) : super(e);
+  AppDatabase.test(super.e);
 
   @override
   int get schemaVersion => 1;

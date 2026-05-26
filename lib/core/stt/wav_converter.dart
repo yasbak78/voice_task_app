@@ -34,8 +34,10 @@ class WavConverter {
   static bool _isAlreadyWhisperFormat(Uint8List bytes) {
     if (bytes.length < 44) return false;
     // Check RIFF header
-    if (bytes[0] != 0x52 || bytes[1] != 0x49 || 
-        bytes[2] != 0x46 || bytes[3] != 0x46) return false;
+    if (bytes[0] != 0x52 || bytes[1] != 0x49 ||
+        bytes[2] != 0x46 || bytes[3] != 0x46) {
+      return false;
+    }
     // Check sample rate at offset 24
     final sampleRate = ByteData.sublistView(bytes, 24, 28).getUint32(0, Endian.little);
     // Check num channels at offset 22

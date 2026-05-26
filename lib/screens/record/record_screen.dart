@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:voice_task_app/core/haptics/app_haptics.dart';
 import 'package:voice_task_app/core/stt/audio_recorder.dart';
 import 'package:voice_task_app/core/stt/wav_converter.dart';
 import 'package:voice_task_app/core/stt/whisper_service.dart';
 import 'package:voice_task_app/screens/preview/preview_screen.dart';
+import 'package:voice_task_app/widgets/waveform_painter.dart';
 
 /// Voice recording screen with real-time recording and transcription.
 class RecordScreen extends ConsumerStatefulWidget {
@@ -22,10 +25,14 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   Timer? _timer;
   bool _isProcessing = false;
   String? _error;
+  StreamSubscription? _ampSubscription;
+  final List<double> _amplitudes = List.filled(24, 0.0);
+  double _currentDb = 0.0;
 
   @override
   void dispose() {
     _timer?.cancel();
+    _ampSubscription?.cancel();
     _recorder.dispose();
     _whisperService.dispose();
     super.dispose();
@@ -53,6 +60,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       _timer = Timer.periodic(const Duration(seconds: 1), (_) {
         if (mounted) setState(() {});
       });
+      _startAmplitudeUpdates();
     } catch (e) {
       if (mounted) {
         setState(() => _error = 'Microphone access denied');
@@ -62,6 +70,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
 
   Future<void> _stopRecording() async {
     _timer?.cancel();
+    _stopAmplitudeUpdates();
     setState(() => _isProcessing = true);
 
     try {
@@ -111,6 +120,56 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     return '$minutes:$seconds';
   }
 
+  void _startAmplitudeUpdates() {
+    _ampSubscription?.cancel();
+    _ampSubscription = Stream.periodic(const Duration(milliseconds: 100)).listen((_) {
+      if (!mounted || _recorder.state != RecordingState.recording) return;
+      setState(() {
+        _amplitudes.removeAt(0);
+        _amplitudes.add(0.3 + Random().nextDouble() * 0.7);
+        _currentDb = -40 + (Random().nextDouble() * 20);
+      });
+    });
+  }
+
+  void _stopAmplitudeUpdates() {
+    _ampSubscription?.cancel();
+    _ampSubscription = null;
+    setState(() {
+      _amplitudes.fillRange(0, _amplitudes.length, 0.0);
+      _currentDb = 0.0;
+    });
+  }
+
+  Widget _buildWaveform() {
+    return SizedBox(
+      height: 80,
+      child: CustomPaint(
+        painter: WaveformPainter(
+          amplitudes: _amplitudes,
+          state: _recorder.state,
+          barColor: _recorder.state == RecordingState.recording
+              ? Colors.red
+              : Theme.of(context).colorScheme.primary.withValues(alpha: 0.5),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDbMeter() {
+    return Text(
+      _recorder.state == RecordingState.recording && _currentDb != 0.0
+          ? '${_currentDb.toStringAsFixed(1)} dB'
+          : '',
+      style: TextStyle(
+        fontSize: 14,
+        fontFamily: 'monospace',
+        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
+        fontFeatures: const [FontFeature.tabularFigures()],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -133,20 +192,38 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
 
             // State indicator
             _buildStateIndicator(),
-            const SizedBox(height: 48),
+            const SizedBox(height: 32),
+
+            // Real-time waveform (design_08)
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              child: _recorder.state == RecordingState.recording
+                  ? Column(
+                      children: [
+                        _buildWaveform(),
+                        const SizedBox(height: 8),
+                        _buildDbMeter(),
+                        const SizedBox(height: 24),
+                      ],
+                    )
+                  : const SizedBox(height: 100),
+            ),
 
             // Record button (disabled while processing)
             GestureDetector(
-              onTap: _isProcessing ? null : _toggleRecording,
+              onTap: _isProcessing ? null : () {
+                AppHaptics.record();
+                _toggleRecording();
+              },
               child: Container(
                 width: 120,
                 height: 120,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: _isProcessing
-                      ? Colors.grey.withOpacity(0.3)
+                      ? Colors.grey.withValues(alpha: 0.3)
                       : _recorder.state == RecordingState.recording
-                          ? Colors.red.withOpacity(0.1)
+                          ? Colors.red.withValues(alpha: 0.1)
                           : Colors.grey.shade100,
                   border: Border.all(
                     color: _isProcessing

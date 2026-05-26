@@ -1,4 +1,5 @@
 import 'package:intl/intl.dart';
+import '../database/app_database.dart';
 
 /// Parsed task result from voice input.
 class ParsedTask {
@@ -57,8 +58,7 @@ class ParserResult {
   bool get hasTasks => tasks.isNotEmpty;
 }
 
-/// Priority level for tasks.
-enum Priority { high, medium, low }
+/// Priority level for tasks is defined in app_database.dart (enum Priority).
 
 /// Main task parser — converts voice transcriptions into structured tasks.
 class TaskParser {
@@ -92,13 +92,13 @@ class TaskParser {
 
   // Filler words to strip
   static final _fillerPattern = RegExp(
-    r'^(um\s*|uh\s*|so\s*|like\s*|hey\s*|hi\s*|hello\s*|okay\s*|ok\s*|alright\s*|can\s*you\s*|please\s*|I\s*need\s*to\s*|I\s*want\s*to\s*|I\s*wanna\s*|wanna\s*|I\s*should\s*|let\s*me\s*|gonna\s*|gotta\s*|just\s*)+',
+    r'^(um\s+|uh\s+|so\s+|like\s+|hey\s+|hi\s+|hello\s+|okay\s+|ok\s+|alright\s+|can\s+you\s+|please\s+|I\s+need\s+to\s+|I\s+want\s+to\s+|I\s+wanna\s+|wanna\s+|I\s+should\s+|let\s+me\s+|gonna\s+|gotta\s+|just\s+)+',
     caseSensitive: false,
   );
 
-  // Time patterns
+  // Time patterns — handles 1:45pm, 1.45pm, 145pm, 1230pm, 1 45pm, etc.
   static final _timePattern = RegExp(
-    r'\b(at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)\b',
+    r'\b(at\s+)?(\d{1,2}[:.\s]?\d{0,2})\s*(am|pm|a\.?m\.?|p\.?m\.?)\b',
     caseSensitive: false,
   );
 
@@ -117,6 +117,42 @@ class TaskParser {
     'in three days': 3,
     'this weekend': 5,
   };
+
+  // Relative time patterns: "in 10 minutes", "in 1 hour", "in half an hour"
+  static final _relativeTimePattern = RegExp(
+    r'in\s+(\d+)\s*(minutes|minute|mins|min|hours|hour|hrs|hr)\b',
+    caseSensitive: false,
+  );
+
+  static final _halfHourPattern = RegExp(
+    r'in\s+half\s+an?\s+hour',
+    caseSensitive: false,
+  );
+
+  /// Extract relative time offset from text and return (minutes, remainingText).
+  static (int, String) _extractRelativeTime(String text) {
+    int? relativeMinutes;
+
+    // Check "half an hour" first
+    if (_halfHourPattern.hasMatch(text)) {
+      text = text.replaceFirst(_halfHourPattern, '').trim();
+      return (30, text);
+    }
+
+    final match = _relativeTimePattern.firstMatch(text);
+    if (match != null) {
+      final value = int.parse(match.group(1)!);
+      final unit = match.group(2)!.toLowerCase();
+      if (unit.startsWith('hour') || unit.startsWith('hr')) {
+        relativeMinutes = value * 60;
+      } else {
+        relativeMinutes = value;
+      }
+      text = text.replaceFirst(_relativeTimePattern, '').trim();
+    }
+
+    return (relativeMinutes ?? 0, text);
+  }
 
   static const Map<String, int> _dayOfWeekOffsets = {
     'on monday': 1,
@@ -170,6 +206,10 @@ class TaskParser {
     final hasReminder = _reminderPattern.hasMatch(text);
     text = text.replaceAll(_reminderPattern, '').trim();
 
+    // Extract relative time ("in 10 minutes", "in 1 hour", "in half an hour")
+    final (relativeMinutes, remainingAfterRelativeTime) = _extractRelativeTime(text);
+    text = remainingAfterRelativeTime;
+
     // Extract time
     DateTime? dueTime;
     final timeMatch = _timePattern.firstMatch(text);
@@ -192,6 +232,10 @@ class TaskParser {
       // Time without date -> today + time
       final now = DateTime.now();
       dueDate = DateTime(now.year, now.month, now.day, dueTime.hour, dueTime.minute);
+    } else if (relativeMinutes > 0) {
+      // Relative time offset (e.g., "in 10 minutes") -> now + offset
+      final now = DateTime.now();
+      dueDate = now.add(Duration(minutes: relativeMinutes));
     }
 
     // Clean up remaining text for title
@@ -222,6 +266,7 @@ class TaskParser {
       priority: priority,
       project: project,
       dueDate: dueDate,
+      dueTime: dueTime,
       hasReminder: hasReminder,
     );
   }
@@ -338,9 +383,32 @@ class TaskParser {
 
   static DateTime? _parseTime(RegExpMatch match) {
     try {
-      final hour = int.parse(match.group(2)!);
-      final minute = int.tryParse(match.group(3) ?? '0') ?? 0;
-      final period = match.group(4)?.toLowerCase();
+      String timeStr = match.group(2)!;
+      final period = match.group(3)?.toLowerCase();
+
+      int hour, minute;
+
+      // Check for separator (colon, dot, or space)
+      if (timeStr.contains(':') || timeStr.contains('.') || timeStr.contains(' ')) {
+        final parts = timeStr.split(RegExp(r'[:.\s]+'));
+        hour = int.parse(parts[0]);
+        minute = parts.length > 1 && parts[1].isNotEmpty ? int.parse(parts[1]) : 0;
+      } else if (timeStr.length == 3) {
+        // 3-digit concatenated: HMM → "145" = 1:45
+        hour = int.parse(timeStr[0]);
+        minute = int.parse(timeStr.substring(1));
+      } else if (timeStr.length == 4) {
+        // 4-digit concatenated: HHMM → "1230" = 12:30
+        hour = int.parse(timeStr.substring(0, 2));
+        minute = int.parse(timeStr.substring(2));
+      } else {
+        // 1-2 digits: just hour → "1" = 1:00
+        hour = int.parse(timeStr);
+        minute = 0;
+      }
+
+      // Validate range before AM/PM adjustment
+      if (hour < 0 || hour > 12 || minute < 0 || minute > 59) return null;
 
       int adjustedHour = hour;
       if (period != null) {
@@ -399,10 +467,21 @@ class TaskParser {
     final matches = splitRegex.allMatches(input);
 
     if (matches.isEmpty) {
-      // Try splitting on "and" between task-like phrases
+      // Try splitting on "and" between task-like phrases, but NOT when "and"
+      // is followed by modifiers like reminders, priority, or project keywords.
       final andRegex = RegExp(r'\s+and\s+(?:also\s+)?', caseSensitive: false);
       final andMatches = andRegex.allMatches(input);
       if (andMatches.isNotEmpty) {
+        // Check if "and" introduces a modifier rather than a new task
+        final afterAnd = input.substring(andMatches.last.end).trim().toLowerCase();
+        final modifierPatterns = RegExp(
+          r'^(remind|set\s|alarm|notify|urgent|asap|high\s|low\s|no\s+rush|priority|project|#)',
+          caseSensitive: false,
+        );
+        if (andMatches.length == 1 && modifierPatterns.hasMatch(afterAnd)) {
+          // "and set reminder" is a modifier, not a new task — don't split
+          return [input];
+        }
         final segments = <String>[];
         int lastEnd = 0;
         for (final m in andMatches) {

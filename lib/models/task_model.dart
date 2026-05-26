@@ -54,6 +54,8 @@ Task createTask({
   TaskStatus status = TaskStatus.pending,
   DateTime? createdAt,
   DateTime? completedAt,
+  bool hasReminder = false,
+  String? reminderTime,
 }) {
   return Task(
     id: id ?? const Uuid().v4(),
@@ -65,6 +67,8 @@ Task createTask({
     status: status,
     createdAt: createdAt ?? DateTime.now(),
     completedAt: completedAt,
+    hasReminder: hasReminder,
+    reminderTime: reminderTime,
     isCalendarEvent: false,
   );
 }

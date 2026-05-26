@@ -66,6 +66,22 @@ class $TasksTable extends Tasks with TableInfo<$TasksTable, Task> {
   late final GeneratedColumn<DateTime> completedAt = GeneratedColumn<DateTime>(
       'completed_at', aliasedName, true,
       type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  static const VerificationMeta _hasReminderMeta =
+      const VerificationMeta('hasReminder');
+  @override
+  late final GeneratedColumn<bool> hasReminder = GeneratedColumn<bool>(
+      'has_reminder', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("has_reminder" IN (0, 1))'),
+      defaultValue: Constant(false));
+  static const VerificationMeta _reminderTimeMeta =
+      const VerificationMeta('reminderTime');
+  @override
+  late final GeneratedColumn<String> reminderTime = GeneratedColumn<String>(
+      'reminder_time', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _isCalendarEventMeta =
       const VerificationMeta('isCalendarEvent');
   @override
@@ -87,6 +103,8 @@ class $TasksTable extends Tasks with TableInfo<$TasksTable, Task> {
         status,
         createdAt,
         completedAt,
+        hasReminder,
+        reminderTime,
         isCalendarEvent
       ];
   @override
@@ -132,6 +150,18 @@ class $TasksTable extends Tasks with TableInfo<$TasksTable, Task> {
           completedAt.isAcceptableOrUnknown(
               data['completed_at']!, _completedAtMeta));
     }
+    if (data.containsKey('has_reminder')) {
+      context.handle(
+          _hasReminderMeta,
+          hasReminder.isAcceptableOrUnknown(
+              data['has_reminder']!, _hasReminderMeta));
+    }
+    if (data.containsKey('reminder_time')) {
+      context.handle(
+          _reminderTimeMeta,
+          reminderTime.isAcceptableOrUnknown(
+              data['reminder_time']!, _reminderTimeMeta));
+    }
     if (data.containsKey('is_calendar_event')) {
       context.handle(
           _isCalendarEventMeta,
@@ -166,6 +196,10 @@ class $TasksTable extends Tasks with TableInfo<$TasksTable, Task> {
           .read(DriftSqlType.dateTime, data['${effectivePrefix}created_at'])!,
       completedAt: attachedDatabase.typeMapping
           .read(DriftSqlType.dateTime, data['${effectivePrefix}completed_at']),
+      hasReminder: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}has_reminder'])!,
+      reminderTime: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}reminder_time']),
       isCalendarEvent: attachedDatabase.typeMapping.read(
           DriftSqlType.bool, data['${effectivePrefix}is_calendar_event'])!,
     );
@@ -192,6 +226,8 @@ class Task extends DataClass implements Insertable<Task> {
   final TaskStatus status;
   final DateTime createdAt;
   final DateTime? completedAt;
+  final bool hasReminder;
+  final String? reminderTime;
   final bool isCalendarEvent;
   const Task(
       {required this.id,
@@ -203,6 +239,8 @@ class Task extends DataClass implements Insertable<Task> {
       required this.status,
       required this.createdAt,
       this.completedAt,
+      required this.hasReminder,
+      this.reminderTime,
       required this.isCalendarEvent});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -230,6 +268,10 @@ class Task extends DataClass implements Insertable<Task> {
     if (!nullToAbsent || completedAt != null) {
       map['completed_at'] = Variable<DateTime>(completedAt);
     }
+    map['has_reminder'] = Variable<bool>(hasReminder);
+    if (!nullToAbsent || reminderTime != null) {
+      map['reminder_time'] = Variable<String>(reminderTime);
+    }
     map['is_calendar_event'] = Variable<bool>(isCalendarEvent);
     return map;
   }
@@ -252,6 +294,10 @@ class Task extends DataClass implements Insertable<Task> {
       completedAt: completedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(completedAt),
+      hasReminder: Value(hasReminder),
+      reminderTime: reminderTime == null && nullToAbsent
+          ? const Value.absent()
+          : Value(reminderTime),
       isCalendarEvent: Value(isCalendarEvent),
     );
   }
@@ -271,6 +317,8 @@ class Task extends DataClass implements Insertable<Task> {
           .fromJson(serializer.fromJson<String>(json['status'])),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       completedAt: serializer.fromJson<DateTime?>(json['completedAt']),
+      hasReminder: serializer.fromJson<bool>(json['hasReminder']),
+      reminderTime: serializer.fromJson<String?>(json['reminderTime']),
       isCalendarEvent: serializer.fromJson<bool>(json['isCalendarEvent']),
     );
   }
@@ -289,6 +337,8 @@ class Task extends DataClass implements Insertable<Task> {
           .toJson<String>($TasksTable.$converterstatus.toJson(status)),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'completedAt': serializer.toJson<DateTime?>(completedAt),
+      'hasReminder': serializer.toJson<bool>(hasReminder),
+      'reminderTime': serializer.toJson<String?>(reminderTime),
       'isCalendarEvent': serializer.toJson<bool>(isCalendarEvent),
     };
   }
@@ -303,6 +353,8 @@ class Task extends DataClass implements Insertable<Task> {
           TaskStatus? status,
           DateTime? createdAt,
           Value<DateTime?> completedAt = const Value.absent(),
+          bool? hasReminder,
+          Value<String?> reminderTime = const Value.absent(),
           bool? isCalendarEvent}) =>
       Task(
         id: id ?? this.id,
@@ -314,6 +366,9 @@ class Task extends DataClass implements Insertable<Task> {
         status: status ?? this.status,
         createdAt: createdAt ?? this.createdAt,
         completedAt: completedAt.present ? completedAt.value : this.completedAt,
+        hasReminder: hasReminder ?? this.hasReminder,
+        reminderTime:
+            reminderTime.present ? reminderTime.value : this.reminderTime,
         isCalendarEvent: isCalendarEvent ?? this.isCalendarEvent,
       );
   Task copyWithCompanion(TasksCompanion data) {
@@ -328,6 +383,11 @@ class Task extends DataClass implements Insertable<Task> {
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       completedAt:
           data.completedAt.present ? data.completedAt.value : this.completedAt,
+      hasReminder:
+          data.hasReminder.present ? data.hasReminder.value : this.hasReminder,
+      reminderTime: data.reminderTime.present
+          ? data.reminderTime.value
+          : this.reminderTime,
       isCalendarEvent: data.isCalendarEvent.present
           ? data.isCalendarEvent.value
           : this.isCalendarEvent,
@@ -346,14 +406,27 @@ class Task extends DataClass implements Insertable<Task> {
           ..write('status: $status, ')
           ..write('createdAt: $createdAt, ')
           ..write('completedAt: $completedAt, ')
+          ..write('hasReminder: $hasReminder, ')
+          ..write('reminderTime: $reminderTime, ')
           ..write('isCalendarEvent: $isCalendarEvent')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(id, title, notes, dueDate, priority, project,
-      status, createdAt, completedAt, isCalendarEvent);
+  int get hashCode => Object.hash(
+      id,
+      title,
+      notes,
+      dueDate,
+      priority,
+      project,
+      status,
+      createdAt,
+      completedAt,
+      hasReminder,
+      reminderTime,
+      isCalendarEvent);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -367,6 +440,8 @@ class Task extends DataClass implements Insertable<Task> {
           other.status == this.status &&
           other.createdAt == this.createdAt &&
           other.completedAt == this.completedAt &&
+          other.hasReminder == this.hasReminder &&
+          other.reminderTime == this.reminderTime &&
           other.isCalendarEvent == this.isCalendarEvent);
 }
 
@@ -380,6 +455,8 @@ class TasksCompanion extends UpdateCompanion<Task> {
   final Value<TaskStatus> status;
   final Value<DateTime> createdAt;
   final Value<DateTime?> completedAt;
+  final Value<bool> hasReminder;
+  final Value<String?> reminderTime;
   final Value<bool> isCalendarEvent;
   final Value<int> rowid;
   const TasksCompanion({
@@ -392,6 +469,8 @@ class TasksCompanion extends UpdateCompanion<Task> {
     this.status = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.completedAt = const Value.absent(),
+    this.hasReminder = const Value.absent(),
+    this.reminderTime = const Value.absent(),
     this.isCalendarEvent = const Value.absent(),
     this.rowid = const Value.absent(),
   });
@@ -405,6 +484,8 @@ class TasksCompanion extends UpdateCompanion<Task> {
     this.status = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.completedAt = const Value.absent(),
+    this.hasReminder = const Value.absent(),
+    this.reminderTime = const Value.absent(),
     this.isCalendarEvent = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
@@ -419,6 +500,8 @@ class TasksCompanion extends UpdateCompanion<Task> {
     Expression<String>? status,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? completedAt,
+    Expression<bool>? hasReminder,
+    Expression<String>? reminderTime,
     Expression<bool>? isCalendarEvent,
     Expression<int>? rowid,
   }) {
@@ -432,6 +515,8 @@ class TasksCompanion extends UpdateCompanion<Task> {
       if (status != null) 'status': status,
       if (createdAt != null) 'created_at': createdAt,
       if (completedAt != null) 'completed_at': completedAt,
+      if (hasReminder != null) 'has_reminder': hasReminder,
+      if (reminderTime != null) 'reminder_time': reminderTime,
       if (isCalendarEvent != null) 'is_calendar_event': isCalendarEvent,
       if (rowid != null) 'rowid': rowid,
     });
@@ -447,6 +532,8 @@ class TasksCompanion extends UpdateCompanion<Task> {
       Value<TaskStatus>? status,
       Value<DateTime>? createdAt,
       Value<DateTime?>? completedAt,
+      Value<bool>? hasReminder,
+      Value<String?>? reminderTime,
       Value<bool>? isCalendarEvent,
       Value<int>? rowid}) {
     return TasksCompanion(
@@ -459,6 +546,8 @@ class TasksCompanion extends UpdateCompanion<Task> {
       status: status ?? this.status,
       createdAt: createdAt ?? this.createdAt,
       completedAt: completedAt ?? this.completedAt,
+      hasReminder: hasReminder ?? this.hasReminder,
+      reminderTime: reminderTime ?? this.reminderTime,
       isCalendarEvent: isCalendarEvent ?? this.isCalendarEvent,
       rowid: rowid ?? this.rowid,
     );
@@ -496,6 +585,12 @@ class TasksCompanion extends UpdateCompanion<Task> {
     if (completedAt.present) {
       map['completed_at'] = Variable<DateTime>(completedAt.value);
     }
+    if (hasReminder.present) {
+      map['has_reminder'] = Variable<bool>(hasReminder.value);
+    }
+    if (reminderTime.present) {
+      map['reminder_time'] = Variable<String>(reminderTime.value);
+    }
     if (isCalendarEvent.present) {
       map['is_calendar_event'] = Variable<bool>(isCalendarEvent.value);
     }
@@ -517,6 +612,8 @@ class TasksCompanion extends UpdateCompanion<Task> {
           ..write('status: $status, ')
           ..write('createdAt: $createdAt, ')
           ..write('completedAt: $completedAt, ')
+          ..write('hasReminder: $hasReminder, ')
+          ..write('reminderTime: $reminderTime, ')
           ..write('isCalendarEvent: $isCalendarEvent, ')
           ..write('rowid: $rowid')
           ..write(')'))
@@ -1126,6 +1223,8 @@ typedef $$TasksTableCreateCompanionBuilder = TasksCompanion Function({
   Value<TaskStatus> status,
   Value<DateTime> createdAt,
   Value<DateTime?> completedAt,
+  Value<bool> hasReminder,
+  Value<String?> reminderTime,
   Value<bool> isCalendarEvent,
   Value<int> rowid,
 });
@@ -1139,6 +1238,8 @@ typedef $$TasksTableUpdateCompanionBuilder = TasksCompanion Function({
   Value<TaskStatus> status,
   Value<DateTime> createdAt,
   Value<DateTime?> completedAt,
+  Value<bool> hasReminder,
+  Value<String?> reminderTime,
   Value<bool> isCalendarEvent,
   Value<int> rowid,
 });
@@ -1182,6 +1283,12 @@ class $$TasksTableFilterComposer extends Composer<_$AppDatabase, $TasksTable> {
   ColumnFilters<DateTime> get completedAt => $composableBuilder(
       column: $table.completedAt, builder: (column) => ColumnFilters(column));
 
+  ColumnFilters<bool> get hasReminder => $composableBuilder(
+      column: $table.hasReminder, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get reminderTime => $composableBuilder(
+      column: $table.reminderTime, builder: (column) => ColumnFilters(column));
+
   ColumnFilters<bool> get isCalendarEvent => $composableBuilder(
       column: $table.isCalendarEvent,
       builder: (column) => ColumnFilters(column));
@@ -1222,6 +1329,13 @@ class $$TasksTableOrderingComposer
 
   ColumnOrderings<DateTime> get completedAt => $composableBuilder(
       column: $table.completedAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get hasReminder => $composableBuilder(
+      column: $table.hasReminder, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get reminderTime => $composableBuilder(
+      column: $table.reminderTime,
+      builder: (column) => ColumnOrderings(column));
 
   ColumnOrderings<bool> get isCalendarEvent => $composableBuilder(
       column: $table.isCalendarEvent,
@@ -1264,6 +1378,12 @@ class $$TasksTableAnnotationComposer
   GeneratedColumn<DateTime> get completedAt => $composableBuilder(
       column: $table.completedAt, builder: (column) => column);
 
+  GeneratedColumn<bool> get hasReminder => $composableBuilder(
+      column: $table.hasReminder, builder: (column) => column);
+
+  GeneratedColumn<String> get reminderTime => $composableBuilder(
+      column: $table.reminderTime, builder: (column) => column);
+
   GeneratedColumn<bool> get isCalendarEvent => $composableBuilder(
       column: $table.isCalendarEvent, builder: (column) => column);
 }
@@ -1300,6 +1420,8 @@ class $$TasksTableTableManager extends RootTableManager<
             Value<TaskStatus> status = const Value.absent(),
             Value<DateTime> createdAt = const Value.absent(),
             Value<DateTime?> completedAt = const Value.absent(),
+            Value<bool> hasReminder = const Value.absent(),
+            Value<String?> reminderTime = const Value.absent(),
             Value<bool> isCalendarEvent = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
@@ -1313,6 +1435,8 @@ class $$TasksTableTableManager extends RootTableManager<
             status: status,
             createdAt: createdAt,
             completedAt: completedAt,
+            hasReminder: hasReminder,
+            reminderTime: reminderTime,
             isCalendarEvent: isCalendarEvent,
             rowid: rowid,
           ),
@@ -1326,6 +1450,8 @@ class $$TasksTableTableManager extends RootTableManager<
             Value<TaskStatus> status = const Value.absent(),
             Value<DateTime> createdAt = const Value.absent(),
             Value<DateTime?> completedAt = const Value.absent(),
+            Value<bool> hasReminder = const Value.absent(),
+            Value<String?> reminderTime = const Value.absent(),
             Value<bool> isCalendarEvent = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
@@ -1339,6 +1465,8 @@ class $$TasksTableTableManager extends RootTableManager<
             status: status,
             createdAt: createdAt,
             completedAt: completedAt,
+            hasReminder: hasReminder,
+            reminderTime: reminderTime,
             isCalendarEvent: isCalendarEvent,
             rowid: rowid,
           ),

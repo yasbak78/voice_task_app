@@ -2,7 +2,7 @@ part of '../app_database.dart';
 
 @DriftAccessor(tables: [Tasks])
 class TaskDao extends DatabaseAccessor<AppDatabase> with _$TaskDaoMixin {
-  TaskDao(AppDatabase db) : super(db);
+  TaskDao(super.db);
 
   Future<List<Task>> getAllTasks() => select(tasks).get();
 
@@ -25,7 +25,9 @@ class TaskDao extends DatabaseAccessor<AppDatabase> with _$TaskDaoMixin {
 
   Future<int> createTask(TasksCompanion task) => into(tasks).insert(task);
 
-  Future<bool> updateTask(Task task) => update(tasks).replace(task);
+  Future<int> updateTask(Task task) =>
+      (update(tasks)..where((t) => t.id.equals(task.id)))
+          .write(task.toCompanion(true));
 
   Future<int> deleteTask(String id) =>
       (delete(tasks)..where((t) => t.id.equals(id))).go();
@@ -35,6 +37,13 @@ class TaskDao extends DatabaseAccessor<AppDatabase> with _$TaskDaoMixin {
           .write(TasksCompanion(
         status: Value(TaskStatus.done),
         completedAt: Value(DateTime.now()),
+      ));
+
+  Future<int> markIncomplete(String id) =>
+      (update(tasks)..where((t) => t.id.equals(id)))
+          .write(TasksCompanion(
+        status: Value(TaskStatus.pending),
+        completedAt: Value(null),
       ));
 
   Stream<List<Task>> watchAllTasks() => select(tasks).watch();
@@ -48,5 +57,26 @@ class TaskDao extends DatabaseAccessor<AppDatabase> with _$TaskDaoMixin {
               (t) => t.dueDate.isBiggerOrEqualValue(startOfDay) & t.dueDate.isSmallerThanValue(endOfDay))
           ..where((t) => t.status.equals(TaskStatus.pending.name)))
         .watch();
+  }
+
+  /// Bulk delete tasks by their IDs.
+  Future<int> bulkDeleteTasks(List<String> ids) async {
+    if (ids.isEmpty) return 0;
+    return (delete(tasks)..where((t) => t.id.isIn(ids))).go();
+  }
+
+  /// Bulk mark tasks as completed.
+  Future<int> bulkMarkComplete(List<String> ids) async {
+    if (ids.isEmpty) return 0;
+    return (update(tasks)..where((t) => t.id.isIn(ids)))
+        .write(TasksCompanion(
+      status: Value(TaskStatus.done),
+      completedAt: Value(DateTime.now()),
+    ));
+  }
+
+  /// Delete ALL tasks from the database.
+  Future<int> deleteAllTasks() {
+    return delete(tasks).go();
   }
 }

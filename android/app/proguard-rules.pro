@@ -1,0 +1,20 @@
+-keep class io.flutter.app.** { *; }
+-keep class io.flutter.plugin.**  { *; }
+-keep class io.flutter.util.**  { *; }
+-keep class io.flutter.view.**  { *; }
+-keep class io.flutter.**  { *; }
+-keep class io.flutter.plugins.**  { *; }
+-keep class com.tekartik.sqflite.** { *; }
+-keep class org.sqlite.** { *; }
+-keep class drift.** { *; }
+-keep class com.koushikdutta.async.** { *; }
+# Record package (record_android) — native audio recording classes
+-keep class com.llfbandit.record.** { *; }
+-dontwarn com.llfbandit.record.**
+-dontwarn org.sqlite.**
+-dontwarn com.koushikdutta.async.**
+-dontwarn com.google.android.play.core.**
+-dontwarn io.flutter.embedding.engine.deferredcomponents.**
+-keepattributes *Annotation*
+-keepattributes SourceFile,LineNumberTable
+-keep public class * extends java.lang.Exception

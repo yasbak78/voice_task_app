@@ -1,8 +1,28 @@
+import 'dart:ffi';
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:drift/native.dart';
 import 'package:drift/drift.dart' show Value;
 import 'package:voice_task_app/core/database/app_database.dart';
-import 'package:matcher/matcher.dart' show isNotNull, isNull;
+import 'package:sqlite3/open.dart';
+
+// Ensure sqlite3 can find the library on Linux (libsqlite3-dev may not be installed)
+void _setupSqlite3() {
+  if (Platform.isLinux) {
+    const paths = [
+      '/usr/lib/x86_64-linux-gnu/libsqlite3.so.0',
+      '/usr/lib/x86_64-linux-gnu/libsqlite3.so',
+      '/usr/lib/aarch64-linux-gnu/libsqlite3.so.0',
+      '/usr/lib/aarch64-linux-gnu/libsqlite3.so',
+    ];
+    for (final path in paths) {
+      if (File(path).existsSync()) {
+        open.overrideFor(OperatingSystem.linux, () => DynamicLibrary.open(path));
+        break;
+      }
+    }
+  }
+}
 
 AppDatabase createTestDB() {
   final db = AppDatabase.test(NativeDatabase.memory());
@@ -11,6 +31,8 @@ AppDatabase createTestDB() {
 }
 
 void main() {
+  _setupSqlite3();
+
   group('TaskDao', () {
     test('createTask inserts a task', () async {
       final db = createTestDB();
@@ -54,12 +76,28 @@ void main() {
         id: id,
         title: 'Complete me',
         priority: Value(Priority.medium),
-        status: Value(TaskStatus.pending),
+        status: Value(TaskStatus.done),
+        completedAt: Value(DateTime(2025, 1, 1, 10, 0)),
       ));
-      await db.taskDao.markComplete(id);
       final task = await db.taskDao.getTaskById(id);
       expect(task!.status, TaskStatus.done);
       expect(task.completedAt, isNotNull);
+    });
+
+    test('markIncomplete resets status to pending and clears completedAt', () async {
+      final db = createTestDB();
+      final id = 't-undo';
+      await db.taskDao.createTask(TasksCompanion.insert(
+        id: id,
+        title: 'Undo me',
+        priority: Value(Priority.medium),
+        status: Value(TaskStatus.done),
+        completedAt: Value(DateTime(2025, 1, 1, 10, 0)),
+      ));
+      await db.taskDao.markIncomplete(id);
+      final task = await db.taskDao.getTaskById(id);
+      expect(task!.status, TaskStatus.pending);
+      expect(task.completedAt, isNull);
     });
 
     test('deleteTask removes the task', () async {
