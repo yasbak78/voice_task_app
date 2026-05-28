@@ -1,5 +1,6 @@
 import 'package:intl/intl.dart';
 import '../database/app_database.dart';
+import '../notifications/notification_service.dart' show ReminderSound;
 
 /// Parsed task result from voice input.
 class ParsedTask {
@@ -10,6 +11,11 @@ class ParsedTask {
   final DateTime? dueDate;
   final DateTime? dueTime;
   final bool hasReminder;
+  /// How long before dueDate the reminder should fire (negative Duration).
+  /// e.g. Duration(minutes: -10) means "10 minutes before".
+  final Duration? reminderOffset;
+  /// Sound type for the reminder notification.
+  final ReminderSound reminderSound;
 
   const ParsedTask({
     required this.title,
@@ -19,6 +25,8 @@ class ParsedTask {
     this.dueDate,
     this.dueTime,
     this.hasReminder = false,
+    this.reminderOffset,
+    this.reminderSound = ReminderSound.systemDefault,
   });
 
   ParsedTask copyWith({
@@ -29,6 +37,8 @@ class ParsedTask {
     DateTime? dueDate,
     DateTime? dueTime,
     bool? hasReminder,
+    Duration? reminderOffset,
+    ReminderSound? reminderSound,
   }) {
     return ParsedTask(
       title: title ?? this.title,
@@ -38,6 +48,8 @@ class ParsedTask {
       dueDate: dueDate ?? this.dueDate,
       dueTime: dueTime ?? this.dueTime,
       hasReminder: hasReminder ?? this.hasReminder,
+      reminderOffset: reminderOffset ?? this.reminderOffset,
+      reminderSound: reminderSound ?? this.reminderSound,
     );
   }
 }
@@ -89,6 +101,22 @@ class TaskParser {
     r'\b(remind\s*me|set\s*(?:a\s*)?reminder|alarm|notify\s*me|alert\s*me)\b',
     caseSensitive: false,
   );
+
+  // Reminder offset: "10 minutes before", "1 hour before", with optional trailing pronoun
+  // Captures: (number) (unit) before [that/it/this/then]
+  static final _reminderOffsetPattern = RegExp(
+    r'(\d+)\s*(minutes|minute|mins|min|hours|hour|hrs|hr|h|m)\s+before(?:\s+(that|it|this|then))?\b',
+    caseSensitive: false,
+  );
+
+  // "half an hour before" / "half hour before" — with optional trailing pronoun
+  static final _reminderHalfHourPattern = RegExp(
+    r'half\s+(?:an?\s+)?hour\s+before(?:\s+(that|it|this|then))?\b',
+    caseSensitive: false,
+  );
+
+  // Default reminder when "remind me" detected but no offset specified
+  static const _defaultReminderOffset = Duration(minutes: 15);
 
   // Filler words to strip
   static final _fillerPattern = RegExp(
@@ -154,6 +182,46 @@ class TaskParser {
     return (relativeMinutes ?? 0, text);
   }
 
+  /// Extract reminder offset from text: "10 minutes before", "1 hour before".
+  /// Returns Duration (positive, e.g. 10 minutes) and cleaned text.
+  static (Duration?, String) _extractReminderOffset(String text) {
+    // Check "half an hour before" first
+    if (_reminderHalfHourPattern.hasMatch(text)) {
+      text = text.replaceFirst(_reminderHalfHourPattern, '').trim();
+      text = _cleanUpAfterRemoval(text);
+      return (const Duration(minutes: 30), text);
+    }
+
+    final match = _reminderOffsetPattern.firstMatch(text);
+    if (match != null) {
+      final value = int.parse(match.group(1)!);
+      final unit = match.group(2)!.toLowerCase();
+      Duration? offset;
+      if (unit.startsWith('hour') || unit.startsWith('hr') || unit == 'h') {
+        offset = Duration(hours: value);
+      } else {
+        offset = Duration(minutes: value);
+      }
+      text = text.replaceFirst(_reminderOffsetPattern, '').trim();
+      text = _cleanUpAfterRemoval(text);
+      return (offset, text);
+    }
+
+    return (null, text);
+  }
+
+  /// Clean up artifacts after removing reminder text: double spaces, orphaned "and".
+  static String _cleanUpAfterRemoval(String text) {
+    // Remove double+ spaces
+    text = text.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
+    // Remove orphaned " and " in middle or "and " at start
+    text = text.replaceAll(RegExp(r'\s+and\s+'), ' ').trim();
+    text = text.replaceAll(RegExp(r'^and\s+', caseSensitive: false), '').trim();
+    // Remove trailing "and"
+    text = text.replaceAll(RegExp(r'\s+and\s*$'), '').trim();
+    return text;
+  }
+
   static const Map<String, int> _dayOfWeekOffsets = {
     'on monday': 1,
     'on tuesday': 2,
@@ -203,8 +271,21 @@ class TaskParser {
     text = text.replaceAll(_projectPrefix, '').trim();
 
     // Extract reminder flag
-    final hasReminder = _reminderPattern.hasMatch(text);
+    var hasReminder = _reminderPattern.hasMatch(text);
     text = text.replaceAll(_reminderPattern, '').trim();
+
+    // Extract reminder offset ALWAYS — "10 minutes before" implies a reminder
+    // even without explicit "remind me" trigger
+    Duration? reminderOffset;
+    final (extractedOffset, remainingAfterOffset) = _extractReminderOffset(text);
+    text = remainingAfterOffset;
+    if (extractedOffset != null) {
+      hasReminder = true;
+      reminderOffset = extractedOffset;
+    } else if (hasReminder) {
+      // Reminder was requested but no specific offset, use default
+      reminderOffset = _defaultReminderOffset;
+    }
 
     // Extract relative time ("in 10 minutes", "in 1 hour", "in half an hour")
     final (relativeMinutes, remainingAfterRelativeTime) = _extractRelativeTime(text);
@@ -268,6 +349,7 @@ class TaskParser {
       dueDate: dueDate,
       dueTime: dueTime,
       hasReminder: hasReminder,
+      reminderOffset: reminderOffset,
     );
   }
 
@@ -495,6 +577,21 @@ class TaskParser {
         if (remainder.isNotEmpty && remainder.length > 5) {
           segments.add(remainder);
         }
+
+        // Same post-processing: merge trailing reminder modifiers back
+        if (segments.length >= 2) {
+          final last = segments.last.trim().toLowerCase();
+          final isReminderModifier = RegExp(
+            r'^(?:remind\s*me\s+)?(?:\d+\s*(?:minutes?|mins?|hours?|hrs?|h|m)\s+before|half\s+an?\s+hour\s+before)',
+            caseSensitive: false,
+          ).hasMatch(last);
+
+          if (isReminderModifier) {
+            segments[segments.length - 2] = '${segments[segments.length - 2]} ${segments.last}';
+            segments.removeLast();
+          }
+        }
+
         if (segments.length > 1) return segments;
       }
       return [input];
@@ -512,6 +609,22 @@ class TaskParser {
     final remainder = input.substring(lastEnd).trim();
     if (remainder.isNotEmpty) {
       segments.add(remainder);
+    }
+
+    // Post-processing: merge trailing reminder modifiers back into the
+    // preceding task. Phrases like "and remind me 10 minutes before that"
+    // are modifiers, not standalone tasks.
+    if (segments.length >= 2) {
+      final last = segments.last.trim().toLowerCase();
+      final isReminderModifier = RegExp(
+        r'^(?:remind\s*me\s+)?(?:\d+\s*(?:minutes?|mins?|hours?|hrs?|h|m)\s+before|half\s+an?\s+hour\s+before)',
+        caseSensitive: false,
+      ).hasMatch(last);
+
+      if (isReminderModifier) {
+        segments[segments.length - 2] = '${segments[segments.length - 2]} ${segments.last}';
+        segments.removeLast();
+      }
     }
 
     return segments;

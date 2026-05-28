@@ -27,6 +27,7 @@ class BackupService {
       // Provide defaults for new fields that may be missing in old backups
       json.putIfAbsent('hasReminder', () => false);
       json.putIfAbsent('reminderTime', () => null);
+      json.putIfAbsent('reminderSound', () => 'default');
       return Task.fromJson(json);
     } catch (e) {
       debugPrint('Failed to parse task from JSON: $e');

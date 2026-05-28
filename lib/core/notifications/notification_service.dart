@@ -3,6 +3,28 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest_all.dart' as tz_data;
 
+/// Available reminder sound options.
+enum ReminderSound {
+  silent('Silent', null, 'no_sound'),
+  gentlePing('Gentle Ping', 'gentle_ping', 'soft_tone'),
+  classicBell('Classic Bell', 'classic_bell', 'bell'),
+  urgentBeep('Urgent Beep', 'urgent_beep', 'urgent'),
+  melody('Melody', 'melody', 'melody'),
+  systemDefault('System Default', null, 'system_default');
+
+  const ReminderSound(this.label, this.androidSoundName, this.id);
+  final String label;
+  final String? androidSoundName; // null = use channel default
+  final String id;
+
+  static ReminderSound fromId(String id) {
+    return ReminderSound.values.firstWhere(
+      (s) => s.id == id,
+      orElse: () => ReminderSound.systemDefault,
+    );
+  }
+}
+
 /// Service for scheduling and managing local task notifications.
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
@@ -40,28 +62,95 @@ class NotificationService {
       onDidReceiveNotificationResponse: _handleNotificationTap,
     );
 
-    await _createNotificationChannel();
+    await _createAllNotificationChannels();
     _initialized = true;
   }
 
   /// Returns true if the notification plugin has been initialized.
   bool get isInitialized => _initialized;
 
-  /// Create Android notification channel.
-  Future<void> _createNotificationChannel() async {
-    const channel = AndroidNotificationChannel(
-      'task_reminders',
-      'Task Reminders',
-      description: 'Notifications for upcoming task deadlines',
+  /// Create all notification channels with different sounds.
+  Future<void> _createAllNotificationChannels() async {
+    final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    if (androidPlugin == null) return;
+
+    // Default channel (system sound)
+    await androidPlugin.createNotificationChannel(const AndroidNotificationChannel(
+      'task_reminders_default',
+      'Task Reminders - Default',
+      description: 'Standard task reminders with system sound',
       importance: Importance.high,
       playSound: true,
       enableVibration: true,
-    );
+    ));
 
-    await _plugin
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(channel);
+    // Gentle ping channel
+    await androidPlugin.createNotificationChannel(AndroidNotificationChannel(
+      'task_reminders_gentle',
+      'Task Reminders - Gentle Ping',
+      description: 'Soft, single-tone reminder',
+      importance: Importance.defaultImportance,
+      playSound: true,
+      sound: RawResourceAndroidNotificationSound('gentle_ping'),
+      enableVibration: false,
+    ));
+
+    // Classic bell channel
+    await androidPlugin.createNotificationChannel(AndroidNotificationChannel(
+      'task_reminders_bell',
+      'Task Reminders - Classic Bell',
+      description: 'Two-tone bell reminder',
+      importance: Importance.high,
+      playSound: true,
+      sound: RawResourceAndroidNotificationSound('classic_bell'),
+      enableVibration: true,
+    ));
+
+    // Urgent beep channel
+    await androidPlugin.createNotificationChannel(AndroidNotificationChannel(
+      'task_reminders_urgent',
+      'Task Reminders - Urgent',
+      description: 'Repeating urgent beep',
+      importance: Importance.max,
+      playSound: true,
+      sound: RawResourceAndroidNotificationSound('urgent_beep'),
+      enableVibration: true,
+      showBadge: true,
+    ));
+
+    // Melody channel
+    await androidPlugin.createNotificationChannel(AndroidNotificationChannel(
+      'task_reminders_melody',
+      'Task Reminders - Melody',
+      description: 'Pleasant ascending melody',
+      importance: Importance.high,
+      playSound: true,
+      sound: RawResourceAndroidNotificationSound('melody'),
+      enableVibration: false,
+    ));
+
+    // Silent channel
+    await androidPlugin.createNotificationChannel(const AndroidNotificationChannel(
+      'task_reminders_silent',
+      'Task Reminders - Silent',
+      description: 'Vibration only, no sound',
+      importance: Importance.low,
+      playSound: false,
+      enableVibration: true,
+    ));
+  }
+
+  /// Get the channel ID for a specific reminder sound.
+  String _getChannelIdForSound(ReminderSound sound) {
+    return switch (sound) {
+      ReminderSound.silent => 'task_reminders_silent',
+      ReminderSound.gentlePing => 'task_reminders_gentle',
+      ReminderSound.classicBell => 'task_reminders_bell',
+      ReminderSound.urgentBeep => 'task_reminders_urgent',
+      ReminderSound.melody => 'task_reminders_melody',
+      ReminderSound.systemDefault => 'task_reminders_default',
+    };
   }
 
   /// Callback for notification tap - set via init().
@@ -80,6 +169,7 @@ class NotificationService {
     required String body,
     required DateTime scheduledDate,
     String? taskId,
+    ReminderSound sound = ReminderSound.systemDefault,
   }) async {
     if (!_initialized) return;
     // Don't schedule past notifications
@@ -87,12 +177,21 @@ class NotificationService {
 
     final tzDate = tz.TZDateTime.from(scheduledDate, tz.local);
 
-    const androidDetails = AndroidNotificationDetails(
-      'task_reminders',
-      'Task Reminders',
-      channelDescription: 'Notifications for upcoming task deadlines',
-      importance: Importance.high,
-      priority: Priority.high,
+    final channelId = _getChannelIdForSound(sound);
+    final androidDetails = AndroidNotificationDetails(
+      channelId,
+      'Task Reminders - ${sound.label}',
+      channelDescription: 'Task reminder with ${sound.label.toLowerCase()} sound',
+      importance: switch (sound) {
+        ReminderSound.urgentBeep => Importance.max,
+        ReminderSound.silent => Importance.low,
+        _ => Importance.high,
+      },
+      priority: switch (sound) {
+        ReminderSound.urgentBeep => Priority.max,
+        ReminderSound.silent => Priority.low,
+        _ => Priority.high,
+      },
       icon: '@mipmap/ic_launcher',
     );
 
@@ -102,7 +201,7 @@ class NotificationService {
       presentSound: true,
     );
 
-    const details = NotificationDetails(
+    final details = NotificationDetails(
       android: androidDetails,
       iOS: iosDetails,
     );

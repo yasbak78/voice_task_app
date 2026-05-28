@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:drift/drift.dart' show Value;
+import 'package:intl/intl.dart';
 import 'package:voice_task_app/core/haptics/app_haptics.dart';
 import 'package:voice_task_app/core/parser/task_parser.dart' as parser show TaskParser, ParsedTask;
 import 'package:voice_task_app/core/database/app_database.dart';
-import 'package:voice_task_app/core/notifications/notification_service.dart';
+import 'package:voice_task_app/core/notifications/notification_service.dart' show NotificationService, ReminderSound;
 import 'package:voice_task_app/providers/task_providers.dart';
+import 'package:voice_task_app/services/ai_task_parser.dart';
 
 /// Preview screen shown after voice parsing, before saving to DB.
 /// Shows the raw transcription at the top, then a list of parsed tasks
@@ -31,6 +33,8 @@ class _EditableTask {
   DateTime? dueDate;
   DateTime? dueTime;
   bool hasReminder;
+  Duration? reminderOffset; // e.g. Duration(minutes: 10) = "10 min before"
+  ReminderSound reminderSound; // sound type for notification
   bool checked; // whether to include this task when saving
 
   _EditableTask(this.parsed)
@@ -41,6 +45,8 @@ class _EditableTask {
         dueDate = null,
         dueTime = null,
         hasReminder = false,
+        reminderOffset = null,
+        reminderSound = ReminderSound.systemDefault,
         checked = true;
 
   void syncFromParsed() {
@@ -51,6 +57,8 @@ class _EditableTask {
     dueDate = parsed.dueDate;
     dueTime = parsed.dueTime;
     hasReminder = parsed.hasReminder;
+    reminderOffset = parsed.reminderOffset;
+    reminderSound = parsed.reminderSound;
   }
 
   /// Combined DateTime for saving to DB (date + time merged).
@@ -69,6 +77,30 @@ class _EditableTask {
     );
   }
 
+  /// When the reminder notification should fire = dueDate - reminderOffset.
+  DateTime? get reminderFireTime {
+    final due = combinedDueDate;
+    if (due == null || !hasReminder || reminderOffset == null) return null;
+    return due.subtract(reminderOffset!);
+  }
+
+  /// Human-readable label for the reminder, e.g. "10 min before (1:50 PM)".
+  String? get reminderLabel {
+    final fire = reminderFireTime;
+    if (fire == null) return null;
+    final offset = reminderOffset!;
+    String offsetStr;
+    if (offset.inMinutes < 60) {
+      offsetStr = '${offset.inMinutes} min before';
+    } else if (offset.inHours == 1 && offset.inMinutes % 60 == 0) {
+      offsetStr = '1 hour before';
+    } else {
+      offsetStr = '${offset.inHours}h ${offset.inMinutes % 60}m before';
+    }
+    final timeStr = DateFormat('h:mm a').format(fire);
+    return '$offsetStr ($timeStr)';
+  }
+
   parser.ParsedTask toParsed() {
     return parser.ParsedTask(
       title: titleController.text.trim(),
@@ -78,6 +110,7 @@ class _EditableTask {
       dueDate: combinedDueDate,
       dueTime: dueTime,
       hasReminder: hasReminder,
+      reminderOffset: reminderOffset,
     );
   }
 
@@ -93,42 +126,95 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
   String? _conversationalReply;
   bool _isSaving = false;
   bool _isInitialized = false;
+  bool _isAiProcessing = true; // Start true — we try AI first
+  bool _usedAi = false; // Whether AI parser succeeded
+  String? _parseError; // Error message if AI fails
+  int _taskCount = 0; // Number of tasks parsed
 
   @override
   void initState() {
     super.initState();
-    _initialize();
+    _initializeAsync();
   }
 
-  void _initialize() {
+  Future<void> _initializeAsync() async {
     final input = widget.transcription.trim();
     if (input.isEmpty) {
-      _tasks.add(_EditableTask(const parser.ParsedTask(title: 'Untitled task'))
-        ..syncFromParsed());
-      _isInitialized = true;
+      setState(() {
+        _tasks.add(_EditableTask(const parser.ParsedTask(title: 'Untitled task'))
+          ..syncFromParsed());
+        _isInitialized = true;
+        _isAiProcessing = false;
+      });
       return;
     }
 
+    // Try AI parser first
+    try {
+      final aiResult = await AITaskParser.splitAndParse(input);
+
+      if (!mounted) return;
+
+      if (aiResult.isConversational) {
+        setState(() {
+          _conversationalReply = aiResult.conversationalReply;
+          _isInitialized = true;
+          _isAiProcessing = false;
+          _usedAi = true;
+        });
+        return;
+      }
+
+      final tasksToUse = aiResult.tasks.isNotEmpty
+          ? aiResult.tasks
+          : [parser.TaskParser.parse(input)];
+
+      setState(() {
+        for (final task in tasksToUse) {
+          final editable = _EditableTask(task)..syncFromParsed();
+          _tasks.add(editable);
+        }
+        _isInitialized = true;
+        _isAiProcessing = false;
+        _usedAi = true;
+        _taskCount = _tasks.length;
+      });
+    } catch (e) {
+      // AI failed — fallback to rule-based parser
+      if (!mounted) return;
+      _fallbackToRuleBased(input);
+    }
+  }
+
+  void _fallbackToRuleBased(String input) {
     final result = parser.TaskParser.splitAndParse(input);
 
     if (result.isConversational) {
-      _conversationalReply = result.conversationalReply;
-      _isInitialized = true;
+      setState(() {
+        _conversationalReply = result.conversationalReply;
+        _isInitialized = true;
+        _isAiProcessing = false;
+        _usedAi = false;
+        _parseError = 'AI unavailable — using local parser';
+      });
       return;
     }
 
-    if (result.tasks.isEmpty) {
-      // Fallback: parse the whole input as a single task
-      final single = parser.TaskParser.parse(input);
-      final editable = _EditableTask(single)..syncFromParsed();
-      _tasks.add(editable);
-    } else {
-      for (final task in result.tasks) {
+    final tasksToUse = result.tasks.isNotEmpty
+        ? result.tasks
+        : [parser.TaskParser.parse(input)];
+
+    setState(() {
+      for (final task in tasksToUse) {
         final editable = _EditableTask(task)..syncFromParsed();
         _tasks.add(editable);
       }
-    }
-    _isInitialized = true;
+      _isInitialized = true;
+      _isAiProcessing = false;
+      _usedAi = false;
+      _parseError = 'AI unavailable — using local parser';
+      _taskCount = _tasks.length;
+    });
   }
 
   @override
@@ -159,7 +245,12 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
         priority: Value(parsed.priority),
         project: parsed.project != null ? Value(parsed.project) : const Value.absent(),
         dueDate: parsed.dueDate != null ? Value(parsed.dueDate) : const Value.absent(),
-        isCalendarEvent: Value(parsed.hasReminder),
+        hasReminder: Value(editable.hasReminder),
+        reminderTime: editable.reminderOffset != null
+            ? Value(_formatReminderOffset(editable.reminderOffset!))
+            : const Value.absent(),
+        reminderSound: Value(editable.reminderSound.id),
+        isCalendarEvent: Value(editable.hasReminder),
         status: Value(TaskStatus.pending),
         createdAt: Value(DateTime.now()),
       );
@@ -168,15 +259,25 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
       savedCount++;
 
       // Schedule notification if reminder enabled and due date set
-      if (parsed.hasReminder && parsed.dueDate != null) {
+      // Schedule notification if task has a due date
+      if (parsed.dueDate != null) {
         final taskId = _generateId();
-        await NotificationService.instance.scheduleTaskNotification(
-          id: int.parse(taskId.substring(taskId.length - 8)),
-          title: 'Task Due: ${parsed.title}',
-          body: parsed.notes ?? 'This task is due now',
-          scheduledDate: parsed.dueDate!,
-          taskId: taskId,
-        );
+        final notificationTime = editable.reminderFireTime ?? parsed.dueDate!;
+        final isReminder = editable.hasReminder && editable.reminderOffset != null;
+
+        // Only schedule if the notification time is in the future
+        if (notificationTime.isAfter(DateTime.now())) {
+          await NotificationService.instance.scheduleTaskNotification(
+            id: int.parse(taskId.substring(taskId.length - 8)),
+            title: isReminder ? 'Reminder: ${parsed.title}' : 'Task Due: ${parsed.title}',
+            body: isReminder
+                ? 'Upcoming: ${parsed.notes ?? parsed.title}'
+                : (parsed.notes ?? 'This task is due now'),
+            scheduledDate: notificationTime,
+            taskId: taskId,
+            sound: editable.reminderSound,
+          );
+        }
       }
     }
 
@@ -249,6 +350,28 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Loading state while AI processes
+    if (_isAiProcessing) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Review Tasks'),
+        ),
+        body: const Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text(
+                'Analyzing with AI...',
+                style: TextStyle(fontSize: 16, color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     if (!_isInitialized) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),
@@ -338,7 +461,46 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
                   color: Theme.of(context).colorScheme.primary,
                 ),
               ),
-              if (_tasks.length > 1) ...[
+              // AI badge — shows which parser was used
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: _usedAi
+                      ? Colors.green.shade100
+                      : Colors.orange.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: _usedAi
+                        ? Colors.green.shade300
+                        : Colors.orange.shade300,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _usedAi ? Icons.auto_awesome : Icons.build,
+                      size: 10,
+                      color: _usedAi
+                          ? Colors.green.shade700
+                          : Colors.orange.shade700,
+                    ),
+                    const SizedBox(width: 3),
+                    Text(
+                      _usedAi ? 'AI' : 'Local',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: _usedAi
+                            ? Colors.green.shade700
+                            : Colors.orange.shade700,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (_taskCount > 1) ...[
                 const SizedBox(width: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -347,7 +509,7 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    '${_tasks.length} tasks',
+                    '$_taskCount tasks',
                     style: TextStyle(
                       fontSize: 10,
                       color: Theme.of(context).colorScheme.onPrimary,
@@ -358,6 +520,35 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
               ],
             ],
           ),
+          // Fallback warning banner
+          if (_parseError != null) ...[
+            const SizedBox(height: 6),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.orange.shade200),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, size: 14, color: Colors.orange.shade700),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      _parseError!,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.orange.shade700,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 6),
           Text(
             widget.transcription,
@@ -502,7 +693,13 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
                       value: editable.hasReminder,
                       onChanged: (v) {
                         AppHaptics.tap();
-                        setState(() => editable.hasReminder = v);
+                        setState(() {
+                          editable.hasReminder = v;
+                          if (v && editable.reminderOffset == null) {
+                            // Default to 10 min before when first enabled
+                            editable.reminderOffset = const Duration(minutes: 10);
+                          }
+                        });
                       },
                     ),
                     const Text('Reminder', style: TextStyle(fontSize: 13)),
@@ -510,10 +707,224 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
                 ),
               ],
             ),
+            // Reminder chip - shows calculated time when reminder is on
+            if (editable.hasReminder && editable.reminderOffset != null)
+              _buildReminderChip(index, editable),
           ],
         ),
       ),
     );
+  }
+
+  /// Reminder chip showing the calculated fire time, tappable to change offset.
+  Widget _buildReminderChip(int index, _EditableTask editable) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: InkWell(
+        onTap: () => _showReminderSelector(index),
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.notifications_active,
+                size: 14,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                editable.reminderLabel ?? 'Reminder set',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Icon(
+                _soundIcon(editable.reminderSound),
+                size: 12,
+                color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.7),
+              ),
+              const SizedBox(width: 4),
+              Icon(
+                Icons.edit,
+                size: 12,
+                color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.6),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Bottom sheet to select reminder offset type and sound.
+  Future<void> _showReminderSelector(int taskIndex) async {
+    AppHaptics.tap();
+    final editable = _tasks[taskIndex];
+
+    // Common offset options
+    final offsetOptions = <({Duration? offset, String label, IconData icon})>[
+      (offset: const Duration(minutes: 5), label: '5 min before', icon: Icons.notifications),
+      (offset: const Duration(minutes: 10), label: '10 min before', icon: Icons.notifications),
+      (offset: const Duration(minutes: 15), label: '15 min before', icon: Icons.notifications),
+      (offset: const Duration(minutes: 30), label: '30 min before', icon: Icons.notifications),
+      (offset: const Duration(hours: 1), label: '1 hour before', icon: Icons.notifications_active),
+      (offset: null, label: 'At time of task', icon: Icons.access_alarm),
+    ];
+
+    // Sound options
+    final soundOptions = ReminderSound.values.where((s) => s != ReminderSound.systemDefault).toList();
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text(
+                    'Reminder Settings',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                  ),
+                ),
+                const Divider(height: 1),
+                // Time section
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'WHEN',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade600,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                  ),
+                ),
+                ...offsetOptions.map((opt) {
+                  final isSelected = editable.reminderOffset == opt.offset;
+                  return ListTile(
+                    leading: Icon(opt.icon, color: isSelected ? Theme.of(context).colorScheme.primary : null),
+                    title: Text(opt.label),
+                    trailing: isSelected ? const Icon(Icons.check, color: Colors.blue) : null,
+                    onTap: () {
+                      setState(() {
+                        editable.reminderOffset = opt.offset;
+                        if (opt.offset == null) {
+                          editable.reminderOffset = Duration.zero;
+                        }
+                      });
+                    },
+                  );
+                }),
+                ListTile(
+                  leading: const Icon(Icons.timer),
+                  title: const Text('Custom time...'),
+                  onTap: () async {
+                    await _pickCustomReminderOffset(taskIndex);
+                  },
+                ),
+                const Divider(height: 1),
+                // Sound section
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'SOUND',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade600,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                  ),
+                ),
+                ...soundOptions.map((sound) {
+                  final isSelected = editable.reminderSound == sound;
+                  return ListTile(
+                    leading: Icon(_soundIcon(sound), color: isSelected ? Theme.of(context).colorScheme.primary : null),
+                    title: Text(sound.label),
+                    trailing: isSelected ? const Icon(Icons.check, color: Colors.blue) : null,
+                    onTap: () {
+                      setState(() {
+                        editable.reminderSound = sound;
+                      });
+                    },
+                  );
+                }),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Get icon for a reminder sound.
+  IconData _soundIcon(ReminderSound sound) {
+    return switch (sound) {
+      ReminderSound.silent => Icons.volume_off,
+      ReminderSound.gentlePing => Icons.waves,
+      ReminderSound.classicBell => Icons.notifications,
+      ReminderSound.urgentBeep => Icons.error_outline,
+      ReminderSound.melody => Icons.music_note,
+      ReminderSound.systemDefault => Icons.volume_up,
+    };
+  }
+
+  /// Time picker for custom reminder offset.
+  Future<void> _pickCustomReminderOffset(int taskIndex) async {
+    final editable = _tasks[taskIndex];
+    final due = editable.combinedDueDate ?? DateTime.now();
+
+    // Let user pick a time for the reminder
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(due),
+      helpText: 'Reminder time',
+    );
+    if (picked != null) {
+      final reminderTime = DateTime(
+        due.year, due.month, due.day,
+        picked.hour, picked.minute,
+      );
+      final offset = due.difference(reminderTime);
+      if (offset.isNegative) {
+        // Reminder time is after due date, warn user
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Reminder time is after the task time')),
+        );
+        return;
+      }
+      setState(() {
+        editable.reminderOffset = offset;
+      });
+    }
   }
 
   Widget _buildSaveBar() {
@@ -575,5 +986,15 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
     final displayHour = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
     final displayMinute = minute.toString().padLeft(2, '0');
     return '$displayHour:$displayMinute $period';
+  }
+
+  /// Format reminder offset for DB storage (e.g. "10m", "1h", "1h30m").
+  String _formatReminderOffset(Duration offset) {
+    if (offset == Duration.zero) return '0m';
+    final hours = offset.inHours;
+    final minutes = offset.inMinutes.remainder(60);
+    if (hours > 0 && minutes > 0) return '${hours}h${minutes}m';
+    if (hours > 0) return '${hours}h';
+    return '${minutes}m';
   }
 }

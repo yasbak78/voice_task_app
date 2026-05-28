@@ -56,6 +56,7 @@ Task createTask({
   DateTime? completedAt,
   bool hasReminder = false,
   String? reminderTime,
+  String? reminderSound,
 }) {
   return Task(
     id: id ?? const Uuid().v4(),
@@ -69,6 +70,7 @@ Task createTask({
     completedAt: completedAt,
     hasReminder: hasReminder,
     reminderTime: reminderTime,
+    reminderSound: reminderSound ?? 'system_default',
     isCalendarEvent: false,
   );
 }

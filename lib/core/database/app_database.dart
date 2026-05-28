@@ -26,6 +26,7 @@ class Tasks extends Table {
   DateTimeColumn get completedAt => dateTime().nullable()();
   BoolColumn get hasReminder => boolean().withDefault(Constant(false))();
   TextColumn get reminderTime => text().nullable()();
+  TextColumn get reminderSound => text().withDefault(Constant('system_default'))();
   BoolColumn get isCalendarEvent => boolean().withDefault(Constant(false))();
 }
 
@@ -50,7 +51,18 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.test(super.e);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
+
+  @override
+  MigrationStrategy get migration {
+    return MigrationStrategy(
+      onUpgrade: (Migrator m, int from, int to) async {
+        if (from < 2) {
+          await m.addColumn(tasks, tasks.reminderSound);
+        }
+      },
+    );
+  }
 
   TaskDao get tasksDao => TaskDao(this);
   CalendarEventDao get calendarDao => CalendarEventDao(this);

@@ -3,6 +3,8 @@ import '../core/haptics/app_haptics.dart';
 import 'home/task_list_screen.dart';
 import 'calendar/calendar_screen.dart';
 import 'settings/settings_screen.dart';
+import 'query/query_screen.dart';
+import 'suggestions/suggestions_screen.dart';
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -32,6 +34,8 @@ class _MainShellState extends State<MainShell> {
         children: const [
           TaskListScreen(),
           CalendarScreen(),
+          QueryScreen(),
+          SuggestionsScreen(),
           SettingsScreen(),
         ],
       ),
@@ -72,6 +76,16 @@ class _BottomBar extends StatelessWidget {
           icon: Icon(Icons.calendar_month_rounded),
           selectedIcon: Icon(Icons.calendar_month),
           label: 'Calendar',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.question_answer_rounded),
+          selectedIcon: Icon(Icons.question_answer),
+          label: 'Ask',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.auto_awesome_rounded),
+          selectedIcon: Icon(Icons.auto_awesome),
+          label: 'Suggestions',
         ),
         NavigationDestination(
           icon: Icon(Icons.settings_rounded),
