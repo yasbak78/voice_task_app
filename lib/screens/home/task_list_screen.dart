@@ -6,6 +6,8 @@ import '../../core/haptics/app_haptics.dart';
 import '../../core/theme/app_components.dart';
 import '../../providers/task_providers.dart';
 import '../../models/task_model.dart';
+import '../../services/haptic_feedback_service.dart';
+import '../../services/sound_preview_service.dart';
 
 // --- Search & filter state providers (overrideable in tests) ---
 final searchQueryProvider = StateProvider<String>((ref) => '');
@@ -296,8 +298,13 @@ class TaskListScreen extends ConsumerWidget {
     final isDone = task.completedAt != null;
     if (isDone) {
       dao.markIncomplete(task.id);
+      AppHaptics.navigate();
     } else {
       dao.markComplete(task.id);
+      // Phase 3: Haptic + chime on task completion
+      AppHaptics.complete();
+      HapticFeedbackService.trigger('heavy');
+      SoundPreviewService.playChime(sound: 'completion_chime');
     }
   }
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:open_file/open_file.dart';
 import 'package:voice_task_app/core/haptics/app_haptics.dart';
 import 'package:voice_task_app/services/update_service.dart';
 enum _UpdateState {
@@ -100,7 +101,24 @@ class _UpdateDialogState extends State<_UpdateDialog> {
   Future<void> _install() async {
     if (_downloadedPath == null) return;
     AppHaptics.tap();
-    await UpdateService.installApk(_downloadedPath!);
+    final result = await UpdateService.installApk(_downloadedPath!);
+    if (!mounted) return;
+    // Close the dialog after triggering the install
+    if (result.type == ResultType.done) {
+      if (context.mounted) Navigator.of(context).pop();
+    } else if (result.message == 'PERMISSION_REQUIRED') {
+      // User was sent to settings to grant permission; show guidance
+      if (!mounted) return;
+      setState(() {
+        _error = 'Enable "Allow from this source" in Settings, then tap Install again.';
+        _state = _UpdateState.readyToInstall;
+      });
+    } else {
+      setState(() {
+        _error = 'Install failed: ${result.message}';
+        _state = _UpdateState.error;
+      });
+    }
   }
 
   String _formatBytes(int bytes) {

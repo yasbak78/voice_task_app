@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_file/open_file.dart';
+import 'package:flutter/services.dart';
 
 class ReleaseInfo {
   final String version;
@@ -97,41 +98,67 @@ class UpdateService {
     }
   }
 
-  /// Download APK with progress callbacks.
+  /// Download APK with progress callbacks using streaming (memory-efficient).
   /// Returns the local file path.
   static Future<String> downloadApk({
     required String url,
     required void Function(int received, int total) onProgress,
   }) async {
-    final dir = await getApplicationDocumentsDirectory();
+    // Use cache directory — FileProvider can reliably share cache files with
+    // the system PackageInstaller, unlike Android 11+ app-external directories.
+    final dir = await getTemporaryDirectory();
     final file = File('${dir.path}/$_apkFileName');
+    if (file.existsSync()) await file.delete();
 
     final client = http.Client();
     try {
       final request = http.Request('GET', Uri.parse(url));
       final streamedResponse = await client.send(request).timeout(
-            const Duration(seconds: 30),
+            const Duration(minutes: 5),
           );
 
       final contentLength = streamedResponse.contentLength ?? 0;
-      final bytes = <int>[];
       int received = 0;
 
+      final sink = file.openWrite();
       await for (final chunk in streamedResponse.stream) {
-        bytes.addAll(chunk);
+        sink.add(chunk);
         received += chunk.length;
         onProgress(received, contentLength > 0 ? contentLength : received);
       }
+      await sink.flush();
+      await sink.close();
 
-      await file.writeAsBytes(bytes);
       return file.path;
+    } catch (e) {
+      if (file.existsSync()) await file.delete();
+      rethrow;
     } finally {
       client.close();
     }
   }
 
-  /// Trigger Android package installer for the downloaded APK.
-  static Future<OpenResult> installApk(String filePath) {
-    return OpenFile.open(filePath);
+  /// Trigger Android package installer using native intent.
+  /// Returns 'PERMISSION_REQUIRED' if the user needs to grant install permission.
+  static Future<OpenResult> installApk(String filePath) async {
+    const platform = MethodChannel('voice_task_app/installer');
+    try {
+      // Check if we have permission to install unknown apps
+      final hasPermission = await platform.invokeMethod<bool>('checkInstallPermission') ?? false;
+      if (!hasPermission) {
+        // Open settings for the user to grant permission, then retry
+        await platform.invokeMethod('openInstallSettings');
+        return OpenResult(
+          type: ResultType.error,
+          message: 'PERMISSION_REQUIRED',
+        );
+      }
+
+      await platform.invokeMethod('installApk', {'filePath': filePath});
+      return OpenResult(type: ResultType.done, message: 'Install triggered');
+    } on PlatformException {
+      // Fallback to open_file if platform channel fails
+      return OpenFile.open(filePath);
+    }
   }
 }

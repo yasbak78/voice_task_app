@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:voice_task_app/providers/task_providers.dart';
+import 'package:voice_task_app/services/notification_action_handler.dart';
 import '../core/haptics/app_haptics.dart';
 import 'home/task_list_screen.dart';
 import 'calendar/calendar_screen.dart';
@@ -6,15 +9,25 @@ import 'settings/settings_screen.dart';
 import 'query/query_screen.dart';
 import 'suggestions/suggestions_screen.dart';
 
-class MainShell extends StatefulWidget {
+class MainShell extends ConsumerStatefulWidget {
   const MainShell({super.key});
 
   @override
-  State<MainShell> createState() => _MainShellState();
+  ConsumerState<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends State<MainShell> {
+class _MainShellState extends ConsumerState<MainShell> {
   int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Initialize notification action handlers
+    final handler = NotificationActionHandler(ref);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      handler.init(context);
+    });
+  }
 
   void _onTap(int index) {
     AppHaptics.navigate();

@@ -43,24 +43,24 @@ class AIConfig {
 
   // ─── Provider Configurations ───────────────────────────────────────────
 
-  static const Map<AIProvider, ProviderConfig> _configs = {
+  static Map<AIProvider, ProviderConfig> _configs = {
     AIProvider.groq: ProviderConfig(
       baseUrl: 'https://api.groq.com/openai/v1',
-      apiKey: 'gsk_oY...j042',
+      apiKey: const String.fromEnvironment('GROQ_API_KEY', defaultValue: 'YOUR_GROQ_API_KEY'),
       model: 'llama-3.3-70b-versatile',
       label: 'Groq (Llama 3.3 70B)',
       dailyTokenBudget: 200_000,
     ),
     AIProvider.openrouter: ProviderConfig(
       baseUrl: 'https://openrouter.ai/api/v1',
-      apiKey: 'sk-or-...b0ee',
+      apiKey: const String.fromEnvironment('OPENROUTER_API_KEY', defaultValue: 'YOUR_OPENROUTER_API_KEY'),
       model: 'meta-llama/llama-3.3-70b-instruct',
       label: 'OpenRouter (Llama 3.3 70B)',
       dailyTokenBudget: 30_000,
     ),
     AIProvider.deepseek: ProviderConfig(
       baseUrl: 'https://api.deepseek.com',
-      apiKey: 'sk-366...aad1',
+      apiKey: const String.fromEnvironment('DEEPSEEK_API_KEY', defaultValue: 'YOUR_DEEPSEEK_API_KEY'),
       model: 'deepseek-chat',
       label: 'DeepSeek V3',
       dailyTokenBudget: 50_000,

@@ -395,6 +395,17 @@ class TaskCard extends StatelessWidget {
 
                       // Priority badge
                       PriorityBadge(priority: task.priority, showLabel: false),
+
+                      // Reminder badge (bell icon for tasks with scheduled reminders)
+                      if (task.hasReminder && !_isDone)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 6),
+                          child: Icon(
+                            Icons.notifications_active_rounded,
+                            size: 18,
+                            color: theme.colorScheme.primary,
+                          ),
+                        ),
                     ],
                   ),
                 ),

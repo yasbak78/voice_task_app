@@ -1,7 +1,21 @@
+import 'dart:async';
 import 'dart:developer';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest_all.dart' as tz_data;
+
+/// Notification action identifiers.
+class NotificationActionIds {
+  static const String complete = 'action_complete';
+  static const String snooze = 'action_snooze';
+  static const String dismiss = 'action_dismiss';
+}
+
+/// Callback type for notification actions (complete, snooze, dismiss).
+typedef NotificationActionCallback = void Function(
+  String actionId,
+  String? taskId,
+);
 
 /// Available reminder sound options.
 enum ReminderSound {
@@ -10,6 +24,9 @@ enum ReminderSound {
   classicBell('Classic Bell', 'classic_bell', 'bell'),
   urgentBeep('Urgent Beep', 'urgent_beep', 'urgent'),
   melody('Melody', 'melody', 'melody'),
+  completionChime('Completion Chime', 'completion_chime', 'completion_chime'),
+  successPing('Success Ping', 'success_ping', 'success_ping'),
+  gentleComplete('Gentle Complete', 'gentle_complete', 'gentle_complete'),
   systemDefault('System Default', null, 'system_default');
 
   const ReminderSound(this.label, this.androidSoundName, this.id);
@@ -34,6 +51,7 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
 
   bool _initialized = false;
+  NotificationActionCallback? _onAction;
 
   NotificationService._internal();
 
@@ -41,8 +59,13 @@ class NotificationService {
   ///
   /// [onNotificationTapped] is called when a notification is tapped. The payload
   /// contains the task ID string.
-  Future<void> init({void Function(String? taskId)? onNotificationTapped}) async {
+  /// [onAction] is called when a notification action button is pressed.
+  Future<void> init({
+    void Function(String? taskId)? onNotificationTapped,
+    NotificationActionCallback? onAction,
+  }) async {
     _onNotificationTapped = onNotificationTapped;
+    _onAction = onAction;
     tz_data.initializeTimeZones();
 
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -130,6 +153,39 @@ class NotificationService {
       enableVibration: false,
     ));
 
+    // Completion chime channel
+    await androidPlugin.createNotificationChannel(AndroidNotificationChannel(
+      'task_reminders_completion',
+      'Task Reminders - Completion Chime',
+      description: 'Three-note ascending chime for task completion',
+      importance: Importance.high,
+      playSound: true,
+      sound: RawResourceAndroidNotificationSound('completion_chime'),
+      enableVibration: true,
+    ));
+
+    // Success ping channel
+    await androidPlugin.createNotificationChannel(AndroidNotificationChannel(
+      'task_reminders_success',
+      'Task Reminders - Success Ping',
+      description: 'Short crisp success tone',
+      importance: Importance.high,
+      playSound: true,
+      sound: RawResourceAndroidNotificationSound('success_ping'),
+      enableVibration: true,
+    ));
+
+    // Gentle complete channel
+    await androidPlugin.createNotificationChannel(AndroidNotificationChannel(
+      'task_reminders_gentle_complete',
+      'Task Reminders - Gentle Complete',
+      description: 'Soft warm completion tone',
+      importance: Importance.defaultImportance,
+      playSound: true,
+      sound: RawResourceAndroidNotificationSound('gentle_complete'),
+      enableVibration: false,
+    ));
+
     // Silent channel
     await androidPlugin.createNotificationChannel(const AndroidNotificationChannel(
       'task_reminders_silent',
@@ -149,6 +205,9 @@ class NotificationService {
       ReminderSound.classicBell => 'task_reminders_bell',
       ReminderSound.urgentBeep => 'task_reminders_urgent',
       ReminderSound.melody => 'task_reminders_melody',
+      ReminderSound.completionChime => 'task_reminders_completion',
+      ReminderSound.successPing => 'task_reminders_success',
+      ReminderSound.gentleComplete => 'task_reminders_gentle_complete',
       ReminderSound.systemDefault => 'task_reminders_default',
     };
   }
@@ -158,6 +217,12 @@ class NotificationService {
 
   /// Handle notification tap - forwards to the configured callback.
   void _handleNotificationTap(NotificationResponse response) {
+    final actionId = response.actionId;
+    if (actionId != null && actionId.isNotEmpty) {
+      log('Notification action: $actionId for task: ${response.payload}');
+      _onAction?.call(actionId, response.payload);
+      return;
+    }
     log('Notification tapped: ${response.payload}');
     _onNotificationTapped?.call(response.payload);
   }
@@ -193,6 +258,26 @@ class NotificationService {
         _ => Priority.high,
       },
       icon: '@mipmap/ic_launcher',
+      actions: <AndroidNotificationAction>[
+        const AndroidNotificationAction(
+          NotificationActionIds.complete,
+          '✓ Complete',
+          showsUserInterface: false,
+          cancelNotification: true,
+        ),
+        const AndroidNotificationAction(
+          NotificationActionIds.snooze,
+          '⏰ Snooze 15m',
+          showsUserInterface: false,
+          cancelNotification: true,
+        ),
+        const AndroidNotificationAction(
+          NotificationActionIds.dismiss,
+          '✕ Dismiss',
+          showsUserInterface: false,
+          cancelNotification: true,
+        ),
+      ],
     );
 
     const iosDetails = DarwinNotificationDetails(
@@ -227,6 +312,85 @@ class NotificationService {
   Future<void> cancelAllNotifications() async {
     if (!_initialized) return;
     await _plugin.cancelAll();
+  }
+
+  /// Snooze a task notification by rescheduling it [minutes] later.
+  ///
+  /// Returns the new scheduled notification time, or null if rescheduling failed.
+  Future<DateTime?> snoozeNotification({
+    required int id,
+    required String title,
+    required String body,
+    required String? taskId,
+    int minutes = 15,
+    ReminderSound sound = ReminderSound.systemDefault,
+  }) async {
+    if (!_initialized) return null;
+
+    final newTime = DateTime.now().add(Duration(minutes: minutes));
+    final tzDate = tz.TZDateTime.from(newTime, tz.local);
+    final channelId = _getChannelIdForSound(sound);
+
+    final androidDetails = AndroidNotificationDetails(
+      channelId,
+      'Task Reminders - ${sound.label}',
+      channelDescription: 'Task reminder (snoozed)',
+      importance: switch (sound) {
+        ReminderSound.urgentBeep => Importance.max,
+        ReminderSound.silent => Importance.low,
+        _ => Importance.high,
+      },
+      priority: switch (sound) {
+        ReminderSound.urgentBeep => Priority.max,
+        ReminderSound.silent => Priority.low,
+        _ => Priority.high,
+      },
+      icon: '@mipmap/ic_launcher',
+      actions: <AndroidNotificationAction>[
+        const AndroidNotificationAction(
+          NotificationActionIds.complete,
+          '✓ Complete',
+          showsUserInterface: false,
+          cancelNotification: true,
+        ),
+        const AndroidNotificationAction(
+          NotificationActionIds.snooze,
+          '⏰ Snooze 15m',
+          showsUserInterface: false,
+          cancelNotification: true,
+        ),
+        const AndroidNotificationAction(
+          NotificationActionIds.dismiss,
+          '✕ Dismiss',
+          showsUserInterface: false,
+          cancelNotification: true,
+        ),
+      ],
+    );
+
+    const iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+
+    final details = NotificationDetails(android: androidDetails, iOS: iosDetails);
+
+    // Cancel existing notification first
+    await _plugin.cancel(id);
+
+    await _plugin.zonedSchedule(
+      id,
+      '$title (snoozed)',
+      body,
+      tzDate,
+      details,
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      payload: taskId,
+    );
+
+    log('Snoozed notification $id to $tzDate');
+    return newTime;
   }
 
   /// Show an immediate notification (for testing).

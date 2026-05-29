@@ -2,11 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:voice_task_app/core/haptics/app_haptics.dart';
 import 'package:voice_task_app/core/theme/app_spacing.dart';
+import 'package:voice_task_app/core/database/app_database.dart';
+import 'package:voice_task_app/core/notifications/notification_service.dart';
 import 'package:voice_task_app/config/ai_config.dart';
 import 'package:voice_task_app/services/ai_client.dart';
 import 'package:voice_task_app/config/tts_config.dart';
 import 'package:voice_task_app/services/tts_service.dart';
 import 'package:voice_task_app/services/token_tracker.dart';
+import 'package:voice_task_app/providers/task_providers.dart';
+import 'package:voice_task_app/services/sound_preview_service.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:voice_task_app/widgets/update_dialog.dart';
 
@@ -28,12 +32,55 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Map<String, int> _todayUsage = {};
   bool _checkingUpdate = false;
   String _currentVersion = '';
+  // Notification settings state
+  bool _notificationsEnabled = true;
+  ReminderSound _selectedDefaultSound = ReminderSound.classicBell;
+  bool _loadingSettings = true;
 
   @override
   void initState() {
     super.initState();
     _loadTokenUsage();
     _getCurrentVersion();
+    _loadNotificationSettings();
+  }
+
+  Future<void> _loadNotificationSettings() async {
+    final db = ref.read(dbProvider);
+    try {
+      final enabled = await db.settingsDao.getValue('notifications_enabled');
+      final sound = await db.settingsDao.getValue('default_notification_sound');
+      if (mounted) {
+        setState(() {
+          _notificationsEnabled = enabled != 'false';
+          _selectedDefaultSound = sound != null
+              ? ReminderSound.values.firstWhere(
+                  (s) => s.name == sound,
+                  orElse: () => ReminderSound.classicBell,
+                )
+              : ReminderSound.classicBell;
+          _loadingSettings = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loadingSettings = false);
+    }
+  }
+
+  Future<void> _setNotificationEnabled(bool value) async {
+    final db = ref.read(dbProvider);
+    await db.settingsDao.setValue('notifications_enabled', value.toString());
+    if (mounted) {
+      setState(() => _notificationsEnabled = value);
+    }
+  }
+
+  Future<void> _setDefaultSound(ReminderSound sound) async {
+    final db = ref.read(dbProvider);
+    await db.settingsDao.setValue('default_notification_sound', sound.name);
+    if (mounted) {
+      setState(() => _selectedDefaultSound = sound);
+    }
   }
 
   Future<void> _getCurrentVersion() async {
@@ -325,29 +372,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
           // ── Notifications ──
           _buildSectionHeader('NOTIFICATIONS', sectionHeaderStyle),
-          Card(
-            margin: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.lg,
-              vertical: AppSpacing.xs,
-            ),
-            child: Column(
-              children: [
-                SwitchListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.lg,
-                  ),
-                  secondary: Icon(Icons.mic_outlined,
-                      color: colorScheme.primary),
-                  title: const Text('Use Silero VAD'),
-                  subtitle: const Text('Skip silence during recording'),
-                  value: true,
-                  onChanged: (v) {
-                    AppHaptics.tap();
-                  },
-                ),
-              ],
-            ),
-          ),
+          if (_loadingSettings)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else
+            _buildNotificationsCard(colorScheme),
 
           const Divider(height: AppSpacing.lg, thickness: 0.5),
 
@@ -542,6 +573,162 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         top: AppSpacing.sm,
       ),
       child: Text(title, style: style),
+    );
+  }
+
+  Widget _buildNotificationsCard(ColorScheme colorScheme) {
+    // Sound options with metadata
+    final soundOptions = [
+      (sound: ReminderSound.silent, icon: Icons.volume_off, label: 'Silent', res: null as String?),
+      (sound: ReminderSound.gentlePing, icon: Icons.circle, label: 'Gentle Ping', res: 'gentle_ping'),
+      (sound: ReminderSound.classicBell, icon: Icons.notifications, label: 'Classic Bell', res: 'classic_bell'),
+      (sound: ReminderSound.urgentBeep, icon: Icons.warning, label: 'Urgent Beep', res: 'urgent_beep'),
+      (sound: ReminderSound.melody, icon: Icons.music_note, label: 'Melody', res: 'melody'),
+      (sound: ReminderSound.completionChime, icon: Icons.check_circle, label: 'Completion Chime', res: 'completion_chime'),
+      (sound: ReminderSound.successPing, icon: Icons.done, label: 'Success Ping', res: 'success_ping'),
+      (sound: ReminderSound.gentleComplete, icon: Icons.thumb_up, label: 'Gentle Complete', res: 'gentle_complete'),
+      (sound: ReminderSound.systemDefault, icon: Icons.devices, label: 'System Default', res: null),
+    ];
+
+    return Card(
+      margin: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.xs,
+      ),
+      child: Column(
+        children: [
+          // ── Toggle ──
+          SwitchListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+            secondary: Icon(Icons.notifications_active, color: colorScheme.primary),
+            title: const Text('Enable Notifications'),
+            subtitle: Text(_notificationsEnabled
+                ? 'Task reminders will alert you'
+                : 'All reminders will be silent'),
+            value: _notificationsEnabled,
+            onChanged: (v) {
+              AppHaptics.tap();
+              _setNotificationEnabled(v);
+            },
+          ),
+          if (_notificationsEnabled) ...[
+            const Divider(height: 1, thickness: 0.5),
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.lg,
+                vertical: AppSpacing.sm,
+              ),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'DEFAULT REMINDER SOUND',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey,
+                    letterSpacing: 1.0,
+                  ),
+                ),
+              ),
+            ),
+            ...soundOptions.map((item) {
+              final isSelected = item.sound == _selectedDefaultSound;
+              final hasSound = item.res != null;
+              final isPlaying = hasSound &&
+                  SoundPreviewService.isPlaying &&
+                  SoundPreviewService.currentlyPlaying == item.res;
+
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () {
+                    AppHaptics.tap();
+                    _setDefaultSound(item.sound);
+                    if (hasSound) SoundPreviewService.play(item.res!);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md,
+                      vertical: AppSpacing.sm,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? colorScheme.primaryContainer.withValues(alpha: 0.3)
+                          : null,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isSelected
+                            ? colorScheme.primary.withValues(alpha: 0.5)
+                            : Colors.transparent,
+                        width: 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          item.icon,
+                          size: 20,
+                          color: isSelected
+                              ? colorScheme.primary
+                              : Colors.grey,
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        Expanded(
+                          child: Text(
+                            item.label,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight:
+                                  isSelected ? FontWeight.w600 : FontWeight.normal,
+                              color: isSelected ? null : Colors.grey.shade600,
+                            ),
+                          ),
+                        ),
+                        if (isSelected)
+                          Icon(
+                            Icons.check_circle,
+                            size: 18,
+                            color: colorScheme.primary,
+                          ),
+                        const SizedBox(width: AppSpacing.xs),
+                        if (hasSound)
+                          InkWell(
+                            borderRadius: BorderRadius.circular(16),
+                            onTap: () {
+                              AppHaptics.tap();
+                              if (isPlaying) {
+                                SoundPreviewService.stop();
+                              } else {
+                                SoundPreviewService.play(item.res!);
+                              }
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: isPlaying
+                                    ? colorScheme.primaryContainer.withValues(alpha: 0.4)
+                                    : Colors.grey.shade100,
+                              ),
+                              child: Icon(
+                                isPlaying ? Icons.stop : Icons.play_arrow,
+                                size: 16,
+                                color: isPlaying
+                                    ? colorScheme.primary
+                                    : Colors.grey.shade600,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ],
+        ],
+      ),
     );
   }
 

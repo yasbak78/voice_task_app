@@ -125,6 +125,7 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
   final List<_EditableTask> _tasks = [];
   String? _conversationalReply;
   bool _isSaving = false;
+  bool _hasScheduledReminders = false;
   bool _isInitialized = false;
   bool _isAiProcessing = true; // Start true — we try AI first
   bool _usedAi = false; // Whether AI parser succeeded
@@ -277,6 +278,10 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
             taskId: taskId,
             sound: editable.reminderSound,
           );
+          // Track if any task had a reminder for the confirmation message
+          if (isReminder) {
+            _hasScheduledReminders = true;
+          }
         }
       }
     }
@@ -284,8 +289,13 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
     if (!mounted) return;
     setState(() => _isSaving = false);
 
+    final reminderNote = _hasScheduledReminders ? '\n🔔 Reminders scheduled' : '';
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$savedCount task${savedCount == 1 ? '' : 's'} saved!')),
+      SnackBar(
+        content: Text('$savedCount task${savedCount == 1 ? '' : 's'} saved!$reminderNote'),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ),
     );
     Navigator.pushNamedAndRemoveUntil(context, '/', (r) => false);
   }
@@ -892,6 +902,9 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
       ReminderSound.classicBell => Icons.notifications,
       ReminderSound.urgentBeep => Icons.error_outline,
       ReminderSound.melody => Icons.music_note,
+      ReminderSound.completionChime => Icons.check_circle,
+      ReminderSound.successPing => Icons.done,
+      ReminderSound.gentleComplete => Icons.thumb_up,
       ReminderSound.systemDefault => Icons.volume_up,
     };
   }
@@ -928,7 +941,7 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
   }
 
   Widget _buildSaveBar() {
-    final checkedCount = _tasks.where((t) => t.checked).length;
+    final checkedCount = _tasks.where((t) => t.checked == true).length;
 
     return Container(
       padding: const EdgeInsets.all(16),
