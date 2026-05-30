@@ -103,7 +103,7 @@ abstract final class AppThemes {
       ),
 
       // Card theme — soft elevation, rounded corners (M3 style)
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
@@ -208,7 +208,7 @@ abstract final class AppThemes {
       ),
 
       // Dialog theme
-      dialogTheme: DialogTheme(
+      dialogTheme: DialogThemeData(
         backgroundColor: surface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
