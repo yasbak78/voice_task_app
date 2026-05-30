@@ -3,7 +3,7 @@
 /// Supports multiple free-tier LLM providers. Switch the active provider
 /// by changing [currentProvider]. All providers use OpenAI-compatible
 /// `/v1/chat/completions` endpoints.
-enum AIProvider { groq, openrouter, deepseek, gemini }
+enum AIProvider { groq, openrouter, deepseek, gemini, cerebras }
 
 class AIConfig {
   AIConfig._();
@@ -16,6 +16,7 @@ class AIConfig {
   /// tries the next one in this list.
   static const fallbackOrder = [
     AIProvider.groq,
+    AIProvider.cerebras,
     AIProvider.openrouter,
     AIProvider.deepseek,
   ];
@@ -71,6 +72,13 @@ class AIConfig {
       model: 'gemini-2.5-flash',
       label: 'Google Gemini 2.5 Flash',
       dailyTokenBudget: 0, // free, no hard limit
+    ),
+    AIProvider.cerebras: ProviderConfig(
+      baseUrl: 'https://api.cerebras.ai/v1',
+      apiKey: const String.fromEnvironment('CEREBRAS_API_KEY', defaultValue: 'YOUR_CEREBRAS_API_KEY'),
+      model: 'gpt-oss-120b',
+      label: 'Cerebras (GPT-OSS 120B)',
+      dailyTokenBudget: 1_000_000,
     ),
   };
 
