@@ -224,10 +224,14 @@ class AIClient {
         ],
         temperature: 0.0,
         maxTokens: 10,
-      );
+        purpose: 'health_check',
+      ).timeout(AIConfig.requestTimeout);
       return (true, config.label, null);
+    } on TimeoutException {
+      return (false, config.label, 'Connection timed out after ${AIConfig.requestTimeout.inSeconds}s');
     } catch (e) {
-      return (false, config.label, e.toString().substring(0, 150));
+      final msg = e.toString();
+      return (false, config.label, msg.substring(0, msg.length.clamp(0, 150)));
     }
   }
 }

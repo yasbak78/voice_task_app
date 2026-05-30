@@ -786,7 +786,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _aiStatus = success ? 'Connected' : 'Error';
       _aiStatusDetail = success
           ? '$label responding'
-          : '$label: ${error!.substring(0, error.length.clamp(0, 60))}';
+          : (error != null && error.isNotEmpty
+              ? '$label: ${error.substring(0, error.length.clamp(0, 60))}'
+              : '$label: connection failed');
     });
   }
 
